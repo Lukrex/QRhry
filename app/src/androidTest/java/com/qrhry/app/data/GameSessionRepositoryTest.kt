@@ -182,6 +182,69 @@ class GameSessionRepositoryTest {
     }
 
     @Test
+    fun v4ToV5MigrationPreservesDataAndMarksExistingVisitsCompleted() {
+        val gameUuid = "12345678-1234-1234-1234-123456789abc"
+        val firstQr = "22345678-1234-1234-1234-123456789abc"
+        val secondQr = "32345678-1234-1234-1234-123456789abc"
+        val mediaId = "42345678-1234-1234-1234-123456789abc"
+        val oldDatabase = SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(databaseName), null)
+        createV4Schema(oldDatabase)
+        oldDatabase.execSQL(
+            "INSERT INTO games(id, title, game_uuid, content_version, updated_at) VALUES (11, 'Preserved game', ?, 7, 1234)",
+            arrayOf(gameUuid)
+        )
+        oldDatabase.execSQL(
+            """INSERT INTO stations(id, game_id, title, body_text, position, qr_token)
+                VALUES (21, 11, 'First', 'First text', 0, ?), (22, 11, 'Second', 'Second text', 1, ?)""",
+            arrayOf(firstQr, secondQr)
+        )
+        oldDatabase.execSQL(
+            """INSERT INTO game_sessions(id, game_id, status, created_at, updated_at, completed_at)
+                VALUES (31, 11, 'IN_PROGRESS', 100, 200, NULL), (32, 11, 'COMPLETED', 300, 400, 400)"""
+        )
+        oldDatabase.execSQL(
+            "INSERT INTO station_visits(session_id, station_id, visited_at) VALUES (31, 21, 111), (32, 21, 311), (32, 22, 322)"
+        )
+        oldDatabase.execSQL(
+            """INSERT INTO station_media(
+                id, station_id, media_type, relative_path, mime_type, original_filename, checksum, byte_size, display_order
+            ) VALUES (?, 21, 'IMAGE', 'assets/preserved.png', 'image/png', 'preserved.png', 'abcd', 456, 0)""",
+            arrayOf(mediaId)
+        )
+        oldDatabase.execSQL("PRAGMA user_version = 4")
+        oldDatabase.close()
+        databaseHelper.close()
+
+        databaseHelper = GameDatabaseHelper(context, databaseName)
+        repository = GameRepository(databaseHelper)
+        val preservedGame = checkNotNull(repository.getGame(11))
+        assertEquals(gameUuid, preservedGame.gameUuid)
+        assertEquals(7, preservedGame.contentVersion)
+        assertEquals(listOf(firstQr, secondQr), preservedGame.stations.map { it.qrToken })
+        assertEquals(mediaId, preservedGame.stations.first().media.single().id)
+        assertEquals("assets/preserved.png", preservedGame.stations.first().media.single().relativePath)
+        assertEquals(listOf(31L), repository.getActiveSessions().map { it.id })
+        assertEquals(GameSessionStatus.COMPLETED, repository.getSessionProgress(32)?.session?.status)
+
+        val visitRows = databaseHelper.readableDatabase.rawQuery(
+            "SELECT session_id, station_id, visited_at, completed_at FROM station_visits ORDER BY session_id, station_id",
+            null
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(listOf(cursor.getLong(0), cursor.getLong(1), cursor.getLong(2), cursor.getLong(3)))
+                }
+            }
+        }
+        assertEquals(
+            listOf(listOf(31L, 21L, 111L, 111L), listOf(32L, 21L, 311L, 311L), listOf(32L, 22L, 322L, 322L)),
+            visitRows
+        )
+        assertEquals(1, repository.getSessionProgress(31)?.completedStationCount)
+        assertEquals("Second", repository.getSessionProgress(31)?.nextStation?.title)
+    }
+
+    @Test
     fun completedSessionsRemainAsHistory() {
         val game = createGame("Trail")
         val firstRun = repository.startOrResumeSession(game.id)
@@ -219,5 +282,72 @@ class GameSessionRepositoryTest {
             )"""
         )
         database.execSQL("CREATE INDEX index_stations_game_id ON stations(game_id)")
+    }
+
+    private fun createV4Schema(database: SQLiteDatabase) {
+        database.execSQL(
+            """CREATE TABLE games (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                game_uuid TEXT NOT NULL UNIQUE,
+                content_version INTEGER NOT NULL DEFAULT 1,
+                updated_at INTEGER NOT NULL
+            )"""
+        )
+        database.execSQL(
+            """CREATE TABLE stations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                body_text TEXT NOT NULL DEFAULT '',
+                position INTEGER NOT NULL,
+                qr_token TEXT NOT NULL UNIQUE,
+                FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
+                UNIQUE (game_id, position)
+            )"""
+        )
+        database.execSQL("CREATE INDEX index_stations_game_id ON stations(game_id)")
+        database.execSQL(
+            """CREATE TABLE game_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
+            )"""
+        )
+        database.execSQL(
+            "CREATE UNIQUE INDEX index_game_sessions_one_active_per_game ON game_sessions(game_id) WHERE status = 'IN_PROGRESS'"
+        )
+        database.execSQL(
+            """CREATE TABLE station_visits (
+                session_id INTEGER NOT NULL,
+                station_id INTEGER NOT NULL,
+                visited_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, station_id),
+                FOREIGN KEY (session_id) REFERENCES game_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (station_id) REFERENCES stations(id) ON DELETE CASCADE
+            )"""
+        )
+        database.execSQL("CREATE INDEX index_station_visits_station_id ON station_visits(station_id)")
+        database.execSQL(
+            """CREATE TABLE station_media (
+                id TEXT PRIMARY KEY NOT NULL,
+                station_id INTEGER NOT NULL,
+                media_type TEXT NOT NULL,
+                relative_path TEXT NOT NULL UNIQUE,
+                mime_type TEXT NOT NULL,
+                original_filename TEXT,
+                checksum TEXT NOT NULL,
+                byte_size INTEGER NOT NULL,
+                display_order INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (station_id) REFERENCES stations(id) ON DELETE CASCADE,
+                UNIQUE (station_id, media_type),
+                UNIQUE (station_id, display_order)
+            )"""
+        )
+        database.execSQL("CREATE INDEX index_station_media_station_id ON station_media(station_id)")
     }
 }

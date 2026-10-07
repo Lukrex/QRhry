@@ -1,24 +1,28 @@
 # Roadmap
 
-## Current slice
+## Completed local milestones
 
-- [x] Create a minimal Android/Compose project and Gradle wrapper.
-- [x] Create a game with at least two titled stations.
-- [x] Save the game and ordered stations atomically in local SQLite.
-- [x] Retrieve and display saved games and station text.
-- [x] Generate and display a stable QR code for every station.
-- [x] Scan a versioned station QR payload and resolve it from SQLite.
-- [x] Show distinct malformed/unknown results and navigate valid scans to station details.
-- [x] Add domain validation and database/core tests.
-- [ ] Build and run the app on an emulator or device.
+- [x] Android/Compose project, game/station SQLite persistence, stable station
+      QR UUIDs, QR generation, and scanning.
+- [x] Persisted play sessions, visits, ordered progression, session restoration,
+      and retained completed sessions.
+- [x] Station image/audio import into app-private game asset directories,
+      metadata persistence, editor replacement/removal, and playback.
+- [x] SQLite v5 multiple-choice task tables and additive v4→v5 migration.
+- [x] Separate station visited and station completed state; taskless stations
+      complete on scan, while tasked stations wait for correct submitted answers.
+- [x] Persisted pending answer selection, incorrect retry history, task completion,
+      station completion, and final-session completion.
+- [x] Multiple-choice authoring and gameplay for the first task type.
 
-## Next
+## Current scope
 
-- Add a locally persisted play session and ordered station progression.
+Continue hardening the local prototype and its test coverage. All game content
+remains data-driven; progression remains linear by station `position`.
 
-## Later, out of current scope
+## Later, not implemented
 
-Typed question/task content, external image/audio resources, scoring,
-achievements, timers, branching, and online content updates. Add each only with
-its data model and migration strategy defined; do not hardcode a demonstration
-game into game logic.
+Text answers, numeric answers, secret codes, optional tasks, scoring, hints,
+timers, achievements, branching, networking, synchronization, and shared content
+versioning. Add each only with an explicit model, migration, and test plan; do
+not hardcode a demonstration game into game logic.

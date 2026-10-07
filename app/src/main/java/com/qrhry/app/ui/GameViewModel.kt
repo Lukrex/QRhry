@@ -15,12 +15,14 @@ import com.qrhry.app.domain.GameDraft
 import com.qrhry.app.domain.GameDraftValidator
 import com.qrhry.app.domain.GameSession
 import com.qrhry.app.domain.GameSessionStatus
+import com.qrhry.app.domain.MultipleChoiceTaskDraft
 import com.qrhry.app.domain.SessionProgress
 import com.qrhry.app.domain.StationDraft
 import com.qrhry.app.domain.StationQrLookup
 import com.qrhry.app.domain.StationScanResult
 import com.qrhry.app.domain.StationMedia
 import com.qrhry.app.domain.StationMediaType
+import com.qrhry.app.domain.TaskSubmissionResult
 import com.qrhry.app.qr.QrPayloadParseResult
 import com.qrhry.app.qr.StationQrPayload
 import kotlinx.coroutines.Dispatchers
@@ -46,7 +48,9 @@ data class GameScreenState(
     val scannerSessionId: Long? = null,
     val scannerReturnRoute: GameScreenRoute = GameScreenRoute.CREATE,
     val editingStation: com.qrhry.app.domain.Station? = null,
-    val isSavingStation: Boolean = false
+    val isSavingStation: Boolean = false,
+    val isSavingTaskAnswer: Boolean = false,
+    val taskSubmissionCorrect: Boolean? = null
 )
 
 enum class GameScreenRoute {
@@ -157,7 +161,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         title: String,
         bodyText: String,
         imageUri: Uri?,
-        audioUri: Uri?
+        audioUri: Uri?,
+        tasks: List<MultipleChoiceTaskDraft>
     ) {
         if (mutableState.value.isSavingStation) return
         viewModelScope.launch {
@@ -177,7 +182,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         stationId,
                         title,
                         bodyText,
-                        listOfNotNull(image?.toMedia(stationId), audio?.toMedia(stationId))
+                        listOfNotNull(image?.toMedia(stationId), audio?.toMedia(stationId)),
+                        tasks
                     ) ?: run {
                         throw IllegalStateException("The station could not be updated.")
                     }
@@ -223,6 +229,54 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun selectTaskOption(taskId: String, optionId: String) {
+        val sessionId = mutableState.value.sessionProgress?.session?.id ?: return
+        viewModelScope.launch {
+            try {
+                val progress = withContext(Dispatchers.IO) {
+                    repository.savePendingTaskSelection(sessionId, taskId, optionId)
+                }
+                mutableState.value = mutableState.value.copy(
+                    sessionProgress = hydrateProgress(progress),
+                    taskSubmissionCorrect = null,
+                    error = null
+                )
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(
+                    error = exception.message ?: "The answer could not be selected."
+                )
+            }
+        }
+    }
+
+    fun submitTaskAnswer(taskId: String) {
+        val sessionId = mutableState.value.sessionProgress?.session?.id ?: return
+        if (mutableState.value.isSavingTaskAnswer) return
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(isSavingTaskAnswer = true, error = null)
+            try {
+                when (val result = withContext(Dispatchers.IO) {
+                    repository.submitTaskAttempt(sessionId, taskId)
+                }) {
+                    is TaskSubmissionResult.Submitted -> mutableState.value = mutableState.value.copy(
+                        sessionProgress = hydrateProgress(result.progress),
+                        taskSubmissionCorrect = result.isCorrect,
+                        isSavingTaskAnswer = false
+                    )
+                    TaskSubmissionResult.NoPendingSelection -> throw IllegalStateException("Select an answer first.")
+                    TaskSubmissionResult.TaskAlreadyCompleted -> throw IllegalStateException("This task is already complete.")
+                    TaskSubmissionResult.TaskUnavailable -> throw IllegalStateException("This task is not available at the current station.")
+                    TaskSubmissionResult.SessionUnavailable -> throw IllegalStateException("The game session is no longer active.")
+                }
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(
+                    isSavingTaskAnswer = false,
+                    error = exception.message ?: "The answer could not be submitted."
+                )
+            }
+        }
+    }
+
     private fun stageAndPromote(
         uri: Uri,
         gameUuid: String,
@@ -263,7 +317,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private fun hydrateProgress(progress: SessionProgress): SessionProgress {
         val stations = progress.stations.map(::hydrateStation)
         val nextStation = stations.firstOrNull { it.id == progress.nextStation?.id }
-        return progress.copy(stations = stations, nextStation = nextStation)
+        val currentStation = stations.firstOrNull { it.id == progress.currentStation?.id }
+        val taskProgress = progress.taskProgress.map { taskState ->
+            val task = currentStation?.tasks?.firstOrNull { it.id == taskState.task.id } ?: taskState.task
+            taskState.copy(task = task)
+        }
+        return progress.copy(
+            stations = stations,
+            nextStation = nextStation,
+            currentStation = currentStation,
+            taskProgress = taskProgress
+        )
     }
 
     private fun hydrateScanResult(result: StationScanResult): StationScanResult = when (result) {
@@ -407,6 +471,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             },
                             sessionProgress = progress,
                             stationScanResult = result,
+                            taskSubmissionCorrect = null,
                             isLookingUpStation = false
                         )
                         refreshGames()

@@ -32,6 +32,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,6 +53,10 @@ import com.qrhry.app.domain.Station
 import com.qrhry.app.domain.StationQrLookup
 import com.qrhry.app.domain.StationDraft
 import com.qrhry.app.domain.StationMediaType
+import com.qrhry.app.domain.MultipleChoiceTask
+import com.qrhry.app.domain.MultipleChoiceTaskDraft
+import com.qrhry.app.domain.TaskOptionDraft
+import com.qrhry.app.domain.TaskProgress
 import com.qrhry.app.qr.StationQrCodeGenerator
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -61,12 +66,41 @@ import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 
 private data class StationFormState(
     val title: String = "",
     val bodyText: String = "",
     val imageUri: Uri? = null,
-    val audioUri: Uri? = null
+    val audioUri: Uri? = null,
+    val task: MultipleChoiceTaskFormState? = null
+)
+
+private data class TaskOptionFormState(
+    val id: String = UUID.randomUUID().toString(),
+    val text: String = "",
+    val isCorrect: Boolean = false
+)
+
+private data class MultipleChoiceTaskFormState(
+    val id: String = UUID.randomUUID().toString(),
+    val prompt: String = "",
+    val options: List<TaskOptionFormState> = listOf(TaskOptionFormState(), TaskOptionFormState())
+)
+
+private fun MultipleChoiceTaskFormState.toDraft(position: Int) = MultipleChoiceTaskDraft(
+    id = id,
+    prompt = prompt,
+    position = position,
+    options = options.mapIndexed { index, option ->
+        TaskOptionDraft(option.id, option.text, index, option.isCorrect)
+    }
+)
+
+private fun MultipleChoiceTask.toFormState() = MultipleChoiceTaskFormState(
+    id = id,
+    prompt = prompt,
+    options = options.map { TaskOptionFormState(it.id, it.text, it.isCorrect) }
 )
 
 private data class PendingMediaPick(
@@ -115,6 +149,10 @@ fun GameScreen(viewModel: GameViewModel, onLaunchQrScanner: () -> Unit) {
                 progress = progress,
                 scanResult = state.stationScanResult,
                 isLoading = state.isLoadingSession,
+                isSubmittingAnswer = state.isSavingTaskAnswer,
+                taskSubmissionCorrect = state.taskSubmissionCorrect,
+                onSelectOption = viewModel::selectTaskOption,
+                onSubmitTask = viewModel::submitTaskAnswer,
                 onScan = viewModel::openSessionScanner,
                 onBack = viewModel::navigateBack
             )
@@ -228,6 +266,23 @@ private fun GameLibraryScreen(
                 }
                 form.imageUri?.let { Text("Image selected: ${it.lastPathSegment}") }
                 form.audioUri?.let { Text("Audio selected: ${it.lastPathSegment}") }
+                if (form.task == null) {
+                    OutlinedButton(onClick = {
+                        stationForms = stationForms.updated(index) {
+                            it.copy(task = MultipleChoiceTaskFormState())
+                        }
+                    }) { Text("Add multiple-choice task") }
+                } else {
+                    MultipleChoiceTaskEditor(
+                        task = form.task,
+                        onChange = { task ->
+                            stationForms = stationForms.updated(index) { it.copy(task = task) }
+                        },
+                        onRemove = {
+                            stationForms = stationForms.updated(index) { it.copy(task = null) }
+                        }
+                    )
+                }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -250,7 +305,13 @@ private fun GameLibraryScreen(
                 onClick = {
                     viewModel.createGame(
                         gameTitle,
-                        stationForms.map { StationDraft(it.title, it.bodyText) },
+                        stationForms.map { form ->
+                            StationDraft(
+                                form.title,
+                                form.bodyText,
+                                listOfNotNull(form.task?.toDraft(0))
+                            )
+                        },
                         stationForms.map { it.imageUri to it.audioUri }
                     )
                 },
@@ -323,9 +384,16 @@ private fun PlaySessionScreen(
     progress: SessionProgress,
     scanResult: StationScanResult?,
     isLoading: Boolean,
+    isSubmittingAnswer: Boolean,
+    taskSubmissionCorrect: Boolean?,
+    onSelectOption: (String, String) -> Unit,
+    onSubmitTask: (String) -> Unit,
     onScan: () -> Unit,
     onBack: () -> Unit
 ) {
+    val acceptedScan = scanResult as? StationScanResult.Accepted
+    val completedScanStation = acceptedScan?.station?.takeIf { it.id in progress.completedStationIds }
+    val displayedStation = progress.currentStation ?: completedScanStation
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -339,22 +407,44 @@ private fun PlaySessionScreen(
             "${progress.completedStationCount} of ${progress.totalStationCount} stations completed",
             style = MaterialTheme.typography.titleMedium
         )
+        displayedStation?.let { station ->
+            Text(
+                if (station.id in progress.completedStationIds) "Completed station" else "Current station",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(station.title, style = MaterialTheme.typography.headlineSmall)
+            if (station.bodyText.isNotBlank()) Text(station.bodyText)
+            station.media.filter { it.mediaType == StationMediaType.IMAGE }.forEach { StationImage(it) }
+            station.media.filter { it.mediaType == StationMediaType.AUDIO }.forEach { StationAudioPlayer(it) }
+        }
         if (progress.session.status == GameSessionStatus.COMPLETED) {
             Text("Game completed!", style = MaterialTheme.typography.headlineSmall)
+        } else if (progress.currentStation != null) {
+            progress.taskProgress.forEach { taskProgress ->
+                MultipleChoiceTaskPlayer(
+                    progress = taskProgress,
+                    isSubmitting = isSubmittingAnswer,
+                    onSelectOption = { optionId -> onSelectOption(taskProgress.task.id, optionId) },
+                    onSubmit = { onSubmitTask(taskProgress.task.id) }
+                )
+            }
+        } else if (progress.stationVisits.isEmpty()) {
+            Text("Scan the first station QR code to begin.")
+            Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
+                Text("Scan first station QR")
+            }
         } else {
             progress.nextStation?.let { next ->
                 Text("Next station", style = MaterialTheme.typography.titleMedium)
                 Text(next.title, style = MaterialTheme.typography.headlineSmall)
-                if (next.bodyText.isNotBlank()) Text(next.bodyText)
-                next.media.filter { it.mediaType == StationMediaType.IMAGE }.forEach { media ->
-                    StationImage(media)
-                }
-                next.media.filter { it.mediaType == StationMediaType.AUDIO }.forEach { media ->
-                    StationAudioPlayer(media)
+                Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
+                    Text("Scan station")
                 }
             }
-            Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
-                Text("Scan next station")
+        }
+        if (progress.currentStation == null) {
+            taskSubmissionCorrect?.let { correct ->
+                Text(if (correct) "Correct answer." else "Incorrect answer. You can try again.")
             }
         }
         scanResult?.let { result ->
@@ -434,10 +524,12 @@ private fun QrScannerScreen(
 }
 
 private fun StationScanResult.message(): String = when (this) {
-    is StationScanResult.Accepted -> if (progress.session.status == GameSessionStatus.COMPLETED) {
-        "${station.title} completed. Game completed!"
-    } else {
-        "${station.title} completed. Continue to the next station."
+    is StationScanResult.Accepted -> when {
+        progress.currentStation?.id == station.id ->
+            if (resumed) "${station.title} visit restored. Complete its task(s) to continue."
+            else "${station.title} visited. Complete its task(s) to continue."
+        progress.session.status == GameSessionStatus.COMPLETED -> "${station.title} completed. Game completed!"
+        else -> "${station.title} completed. Scan the next station."
     }
     StationScanResult.UnknownQr -> "Unknown QR: no saved station matches this code."
     is StationScanResult.WrongGame -> "${station.title} belongs to another game."
@@ -476,13 +568,14 @@ private fun StationEditScreen(
     error: String?,
     onPickMedia: (StationMediaType, (Uri) -> Unit) -> Unit,
     onRemoveMedia: (Long, StationMediaType) -> Unit,
-    onSave: (Long, String, String, Uri?, Uri?) -> Unit,
+    onSave: (Long, String, String, Uri?, Uri?, List<MultipleChoiceTaskDraft>) -> Unit,
     onCancel: () -> Unit
 ) {
     var title by remember(station.id) { mutableStateOf(station.title) }
     var bodyText by remember(station.id) { mutableStateOf(station.bodyText) }
     var imageUri by remember(station.id) { mutableStateOf<Uri?>(null) }
     var audioUri by remember(station.id) { mutableStateOf<Uri?>(null) }
+    var tasks by remember(station.id) { mutableStateOf(station.tasks.map { it.toFormState() }) }
     val image = station.media.firstOrNull { it.mediaType == StationMediaType.IMAGE }
     val audio = station.media.firstOrNull { it.mediaType == StationMediaType.AUDIO }
     Column(
@@ -510,9 +603,25 @@ private fun StationEditScreen(
                 Text("Remove audio")
             }
         }
+        tasks.forEachIndexed { index, task ->
+            MultipleChoiceTaskEditor(
+                task = task,
+                onChange = { updated -> tasks = tasks.updated(index) { updated } },
+                onRemove = { tasks = tasks.filterIndexed { taskIndex, _ -> taskIndex != index } }
+            )
+        }
+        if (tasks.isEmpty()) {
+            OutlinedButton(onClick = { tasks = listOf(MultipleChoiceTaskFormState()) }) {
+                Text("Add multiple-choice task")
+            }
+        }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(
-            onClick = { onSave(station.id, title, bodyText, imageUri, audioUri) },
+            onClick = {
+                onSave(station.id, title, bodyText, imageUri, audioUri, tasks.mapIndexed { index, task ->
+                    task.toDraft(index)
+                })
+            },
             enabled = !isSaving,
             modifier = Modifier.fillMaxWidth()
         ) { Text(if (isSaving) "Saving..." else "Save station") }
@@ -597,4 +706,110 @@ private fun StationQrImage(station: Station, modifier: Modifier = Modifier) {
         contentDescription = "QR code for ${station.title}",
         modifier = modifier
     )
+}
+
+@Composable
+private fun MultipleChoiceTaskEditor(
+    task: MultipleChoiceTaskFormState,
+    onChange: (MultipleChoiceTaskFormState) -> Unit,
+    onRemove: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Multiple-choice task", style = MaterialTheme.typography.titleMedium)
+            OutlinedButton(onClick = onRemove) { Text("Remove task") }
+        }
+        OutlinedTextField(
+            value = task.prompt,
+            onValueChange = { onChange(task.copy(prompt = it)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Question") }
+        )
+        task.options.forEachIndexed { index, option ->
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                RadioButton(
+                    selected = option.isCorrect,
+                    onClick = {
+                        onChange(task.copy(options = task.options.mapIndexed { optionIndex, item ->
+                            item.copy(isCorrect = optionIndex == index)
+                        }))
+                    }
+                )
+                OutlinedTextField(
+                    value = option.text,
+                    onValueChange = { value ->
+                        onChange(task.copy(options = task.options.updated(index) { it.copy(text = value) }))
+                    },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("Option ${index + 1}") },
+                    singleLine = true
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        val options = task.options.toMutableList()
+                        val moved = options.removeAt(index)
+                        options.add(index - 1, moved)
+                        onChange(task.copy(options = options))
+                    },
+                    enabled = index > 0
+                ) { Text("Move up") }
+                OutlinedButton(
+                    onClick = {
+                        val options = task.options.toMutableList()
+                        val moved = options.removeAt(index)
+                        options.add(index + 1, moved)
+                        onChange(task.copy(options = options))
+                    },
+                    enabled = index < task.options.lastIndex
+                ) { Text("Move down") }
+                OutlinedButton(
+                    onClick = { onChange(task.copy(options = task.options.filterIndexed { i, _ -> i != index })) }
+                ) { Text("Remove option") }
+            }
+        }
+        OutlinedButton(
+            onClick = { onChange(task.copy(options = task.options + TaskOptionFormState())) }
+        ) { Text("Add option") }
+    }
+}
+
+@Composable
+private fun MultipleChoiceTaskPlayer(
+    progress: TaskProgress,
+    isSubmitting: Boolean,
+    onSelectOption: (String) -> Unit,
+    onSubmit: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(progress.task.prompt, style = MaterialTheme.typography.titleLarge)
+        if (progress.isCompleted) {
+            Text("Task complete.")
+        } else {
+            if (progress.pendingAttempt == null) {
+                progress.lastSubmittedAttempt?.takeIf { it.correctness == false }?.let {
+                    Text("Incorrect answer. Choose again.", color = MaterialTheme.colorScheme.error)
+                }
+            }
+            progress.task.options.forEach { option ->
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = progress.pendingAttempt?.selectedOptionId == option.id,
+                        onClick = { onSelectOption(option.id) },
+                        enabled = !isSubmitting
+                    )
+                    Text(option.text)
+                }
+            }
+            Button(
+                onClick = onSubmit,
+                enabled = progress.pendingAttempt != null && !isSubmitting,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (isSubmitting) "Submitting..." else "Submit answer") }
+        }
+    }
 }
