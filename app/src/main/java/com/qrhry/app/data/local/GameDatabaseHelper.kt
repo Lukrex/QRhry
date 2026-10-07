@@ -20,7 +20,10 @@ class GameDatabaseHelper(
         db.execSQL(
             """CREATE TABLE games (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL CHECK (length(trim(title)) > 0)
+                title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+                game_uuid TEXT NOT NULL UNIQUE,
+                content_version INTEGER NOT NULL DEFAULT 1,
+                updated_at INTEGER NOT NULL
             )"""
         )
         db.execSQL(
@@ -37,6 +40,7 @@ class GameDatabaseHelper(
         )
         db.execSQL("CREATE INDEX index_stations_game_id ON stations(game_id)")
         createSessionTables(db)
+        createStationMediaTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -51,6 +55,10 @@ class GameDatabaseHelper(
                     migrateV2ToV3(db)
                     version = 3
                 }
+                3 -> {
+                    migrateV3ToV4(db)
+                    version = 4
+                }
                 else -> throw SQLiteException(
                     "No migration is defined from database version $version to $newVersion."
                 )
@@ -61,6 +69,42 @@ class GameDatabaseHelper(
 
     private fun migrateV2ToV3(db: SQLiteDatabase) {
         createSessionTables(db)
+    }
+
+    private fun migrateV3ToV4(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE games ADD COLUMN game_uuid TEXT")
+        db.execSQL("ALTER TABLE games ADD COLUMN content_version INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE games ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0")
+        db.rawQuery("SELECT id FROM games", null).use { cursor ->
+            while (cursor.moveToNext()) {
+                db.execSQL(
+                    "UPDATE games SET game_uuid = ?, updated_at = ? WHERE id = ?",
+                    arrayOf(UUID.randomUUID().toString(), System.currentTimeMillis(), cursor.getLong(0))
+                )
+            }
+        }
+        db.execSQL("CREATE UNIQUE INDEX index_games_game_uuid ON games(game_uuid)")
+        createStationMediaTable(db)
+    }
+
+    private fun createStationMediaTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE station_media (
+                id TEXT PRIMARY KEY NOT NULL,
+                station_id INTEGER NOT NULL,
+                media_type TEXT NOT NULL CHECK (media_type IN ('IMAGE', 'AUDIO')),
+                relative_path TEXT NOT NULL UNIQUE,
+                mime_type TEXT NOT NULL,
+                original_filename TEXT,
+                checksum TEXT NOT NULL,
+                byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+                display_order INTEGER NOT NULL DEFAULT 0 CHECK (display_order >= 0),
+                FOREIGN KEY (station_id) REFERENCES stations(id) ON DELETE CASCADE,
+                UNIQUE (station_id, media_type),
+                UNIQUE (station_id, display_order)
+            )"""
+        )
+        db.execSQL("CREATE INDEX index_station_media_station_id ON station_media(station_id)")
     }
 
     private fun createSessionTables(db: SQLiteDatabase) {
@@ -131,6 +175,6 @@ class GameDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "qrhry.db"
-        const val DATABASE_VERSION = 3
+        const val DATABASE_VERSION = 4
     }
 }

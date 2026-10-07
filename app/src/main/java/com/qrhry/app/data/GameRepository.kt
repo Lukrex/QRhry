@@ -12,6 +12,8 @@ import com.qrhry.app.domain.SessionProgress
 import com.qrhry.app.domain.Station
 import com.qrhry.app.domain.StationScanResult
 import com.qrhry.app.domain.StationQrLookup
+import com.qrhry.app.domain.StationMedia
+import com.qrhry.app.domain.StationMediaType
 import java.util.UUID
 
 class GameRepository(private val databaseHelper: GameDatabaseHelper) {
@@ -27,7 +29,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         val games = mutableListOf<Game>()
         val database = databaseHelper.readableDatabase
         database.rawQuery(
-            "SELECT id, title FROM games ORDER BY id DESC",
+            "SELECT id, title, game_uuid, content_version, updated_at FROM games ORDER BY id DESC",
             null
         ).use { gameCursor ->
             while (gameCursor.moveToNext()) {
@@ -35,7 +37,10 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 games += Game(
                     id = gameId,
                     title = gameCursor.getString(1),
-                    stations = getStations(database, gameId)
+                    stations = getStations(database, gameId),
+                    gameUuid = gameCursor.getString(2),
+                    contentVersion = gameCursor.getInt(3),
+                    updatedAt = gameCursor.getLong(4)
                 )
             }
         }
@@ -43,6 +48,159 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
     }
 
     fun getGame(gameId: Long): Game? = getAllGames().firstOrNull { it.id == gameId }
+
+    fun updateStationContent(
+        stationId: Long,
+        title: String,
+        bodyText: String,
+        replacements: List<StationMedia> = emptyList()
+    ): List<StationMedia>? {
+        require(title.isNotBlank()) { "Enter a station title." }
+        val database = databaseHelper.writableDatabase
+        val previous = mutableListOf<StationMedia>()
+        database.beginTransaction()
+        try {
+            val gameId = database.rawQuery(
+                "SELECT game_id FROM stations WHERE id = ?",
+                arrayOf(stationId.toString())
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else return null }
+            replacements.forEach { media ->
+                getStationMedia(database, stationId, media.mediaType)?.let(previous::add)
+                database.delete(
+                    "station_media",
+                    "station_id = ? AND media_type = ?",
+                    arrayOf(stationId.toString(), media.mediaType.name)
+                )
+                database.insertOrThrow(
+                    "station_media",
+                    null,
+                    ContentValues().apply {
+                        put("id", media.id)
+                        put("station_id", stationId)
+                        put("media_type", media.mediaType.name)
+                        put("relative_path", media.relativePath)
+                        put("mime_type", media.mimeType)
+                        put("original_filename", media.originalFilename)
+                        put("checksum", media.checksum)
+                        put("byte_size", media.byteSize)
+                        put("display_order", if (media.mediaType == StationMediaType.IMAGE) 0 else 1)
+                    }
+                )
+            }
+            database.execSQL(
+                "UPDATE stations SET title = ?, body_text = ? WHERE id = ?",
+                arrayOf(title.trim(), bodyText.trim(), stationId)
+            )
+            incrementContentVersion(database, gameId)
+            database.setTransactionSuccessful()
+            return previous
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    fun getGameUuidForStation(stationId: Long): String? =
+        databaseHelper.readableDatabase.rawQuery(
+            """SELECT games.game_uuid FROM games
+                INNER JOIN stations ON stations.game_id = games.id WHERE stations.id = ?""",
+            arrayOf(stationId.toString())
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+
+    fun getGameIdForStation(stationId: Long): Long? =
+        databaseHelper.readableDatabase.rawQuery(
+            "SELECT game_id FROM stations WHERE id = ?",
+            arrayOf(stationId.toString())
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
+
+    fun replaceStationMedia(stationId: Long, media: StationMedia): StationMedia? {
+        val database = databaseHelper.writableDatabase
+        database.beginTransaction()
+        try {
+            val gameId = database.rawQuery(
+                "SELECT game_id FROM stations WHERE id = ?",
+                arrayOf(stationId.toString())
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else return null }
+            val previous = getStationMedia(database, stationId, media.mediaType)
+            database.delete(
+                "station_media",
+                "station_id = ? AND media_type = ?",
+                arrayOf(stationId.toString(), media.mediaType.name)
+            )
+            database.insertOrThrow(
+                "station_media",
+                null,
+                ContentValues().apply {
+                    put("id", media.id)
+                    put("station_id", stationId)
+                    put("media_type", media.mediaType.name)
+                    put("relative_path", media.relativePath)
+                    put("mime_type", media.mimeType)
+                    put("original_filename", media.originalFilename)
+                    put("checksum", media.checksum)
+                    put("byte_size", media.byteSize)
+                    put("display_order", if (media.mediaType == StationMediaType.IMAGE) 0 else 1)
+                }
+            )
+            incrementContentVersion(database, gameId)
+            database.setTransactionSuccessful()
+            return previous
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    fun replaceGameStationMedia(replacements: List<Pair<Long, StationMedia>>): List<StationMedia> {
+        val database = databaseHelper.writableDatabase
+        val previous = mutableListOf<StationMedia>()
+        database.beginTransaction()
+        try {
+            val changedGameIds = mutableSetOf<Long>()
+            replacements.forEach { (stationId, media) ->
+                val gameId = database.rawQuery(
+                    "SELECT game_id FROM stations WHERE id = ?",
+                    arrayOf(stationId.toString())
+                ).use { cursor ->
+                    check(cursor.moveToFirst()) { "Station $stationId does not exist." }
+                    cursor.getLong(0)
+                }
+                getStationMedia(database, stationId, media.mediaType)?.let(previous::add)
+                database.delete(
+                    "station_media",
+                    "station_id = ? AND media_type = ?",
+                    arrayOf(stationId.toString(), media.mediaType.name)
+                )
+                database.insertOrThrow("station_media", null, media.toContentValues(stationId))
+                changedGameIds += gameId
+            }
+            changedGameIds.forEach { incrementContentVersion(database, it) }
+            database.setTransactionSuccessful()
+            return previous
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    fun removeStationMedia(stationId: Long, mediaType: StationMediaType): StationMedia? {
+        val database = databaseHelper.writableDatabase
+        database.beginTransaction()
+        try {
+            val gameId = database.rawQuery(
+                "SELECT game_id FROM stations WHERE id = ?",
+                arrayOf(stationId.toString())
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else return null }
+            val previous = getStationMedia(database, stationId, mediaType) ?: return null
+            database.delete(
+                "station_media",
+                "station_id = ? AND media_type = ?",
+                arrayOf(stationId.toString(), mediaType.name)
+            )
+            incrementContentVersion(database, gameId)
+            database.setTransactionSuccessful()
+            return previous
+        } finally {
+            database.endTransaction()
+        }
+    }
 
     fun findStationByQrToken(qrToken: String): StationQrLookup? {
         val database = databaseHelper.readableDatabase
@@ -285,10 +443,52 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             arrayOf(gameId.toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                stations += cursor.toStation()
+                val station = cursor.toStation()
+                stations += station.copy(media = getStationMedia(database, station.id))
             }
         }
         return stations
+    }
+
+    private fun getStationMedia(database: SQLiteDatabase, stationId: Long): List<StationMedia> {
+        val items = mutableListOf<StationMedia>()
+        database.rawQuery(
+            """SELECT id, station_id, media_type, relative_path, mime_type,
+                original_filename, checksum, byte_size, display_order
+                FROM station_media WHERE station_id = ? ORDER BY display_order""",
+            arrayOf(stationId.toString())
+        ).use { cursor -> while (cursor.moveToNext()) items += cursor.toStationMedia() }
+        return items
+    }
+
+    private fun getStationMedia(
+        database: SQLiteDatabase,
+        stationId: Long,
+        mediaType: StationMediaType
+    ): StationMedia? = database.rawQuery(
+        """SELECT id, station_id, media_type, relative_path, mime_type,
+            original_filename, checksum, byte_size, display_order
+            FROM station_media WHERE station_id = ? AND media_type = ?""",
+        arrayOf(stationId.toString(), mediaType.name)
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.toStationMedia() else null }
+
+    private fun incrementContentVersion(database: SQLiteDatabase, gameId: Long) {
+        database.execSQL(
+            "UPDATE games SET content_version = content_version + 1, updated_at = ? WHERE id = ?",
+            arrayOf(System.currentTimeMillis(), gameId)
+        )
+    }
+
+    private fun StationMedia.toContentValues(stationId: Long) = ContentValues().apply {
+        put("id", id)
+        put("station_id", stationId)
+        put("media_type", mediaType.name)
+        put("relative_path", relativePath)
+        put("mime_type", mimeType)
+        put("original_filename", originalFilename)
+        put("checksum", checksum)
+        put("byte_size", byteSize)
+        put("display_order", if (mediaType == StationMediaType.IMAGE) 0 else 1)
     }
 
     private fun android.database.Cursor.toStation() = Station(
@@ -309,13 +509,29 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         completedAt = if (isNull(5)) null else getLong(5)
     )
 
+    private fun android.database.Cursor.toStationMedia() = StationMedia(
+        id = getString(0),
+        stationId = getLong(1),
+        mediaType = StationMediaType.valueOf(getString(2)),
+        relativePath = getString(3),
+        mimeType = getString(4),
+        originalFilename = if (isNull(5)) null else getString(5),
+        checksum = getString(6),
+        byteSize = getLong(7),
+        displayOrder = getInt(8)
+    )
+
     private fun SQLiteDatabase.beginTransactionAndInsertGame(draft: GameDraft): Long {
         beginTransaction()
         try {
             val gameId = insertOrThrow(
                 "games",
                 null,
-                ContentValues().apply { put("title", draft.title.trim()) }
+                ContentValues().apply {
+                    put("title", draft.title.trim())
+                    put("game_uuid", UUID.randomUUID().toString())
+                    put("updated_at", System.currentTimeMillis())
+                }
             )
             draft.stations.forEachIndexed { index, station ->
                 insertOrThrow(

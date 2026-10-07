@@ -171,7 +171,14 @@ class GameSessionRepositoryTest {
         assertEquals("Preserved station", station.title)
         assertEquals("Preserved text", station.bodyText)
         assertEquals("12345678-1234-1234-1234-123456789abc", station.qrToken)
+        val migratedGameUuid = migratedGame.gameUuid
+        assertEquals(migratedGameUuid, UUID.fromString(migratedGameUuid).toString())
         assertNotNull(repository.startOrResumeSession(11))
+
+        databaseHelper.close()
+        databaseHelper = GameDatabaseHelper(context, databaseName)
+        repository = GameRepository(databaseHelper)
+        assertEquals(migratedGameUuid, repository.getGame(11)?.gameUuid)
     }
 
     @Test

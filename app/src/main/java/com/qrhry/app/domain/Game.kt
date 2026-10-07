@@ -3,7 +3,10 @@ package com.qrhry.app.domain
 data class Game(
     val id: Long,
     val title: String,
-    val stations: List<Station>
+    val stations: List<Station>,
+    val gameUuid: String = "",
+    val contentVersion: Int = 1,
+    val updatedAt: Long = 0L
 )
 
 data class Station(
@@ -12,7 +15,27 @@ data class Station(
     val title: String,
     val bodyText: String,
     val position: Int,
-    val qrToken: String
+    val qrToken: String,
+    val media: List<StationMedia> = emptyList()
+)
+
+enum class StationMediaType {
+    IMAGE,
+    AUDIO
+}
+
+data class StationMedia(
+    val id: String,
+    val stationId: Long,
+    val mediaType: StationMediaType,
+    val relativePath: String,
+    val mimeType: String,
+    val originalFilename: String?,
+    val checksum: String,
+    val byteSize: Long,
+    val displayOrder: Int,
+    val localPath: String? = null,
+    val isAvailable: Boolean = true
 )
 
 data class GameDraft(

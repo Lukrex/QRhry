@@ -1,5 +1,11 @@
 package com.qrhry.app.ui
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,8 +17,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.Image
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -37,16 +51,42 @@ import com.qrhry.app.domain.StationScanResult
 import com.qrhry.app.domain.Station
 import com.qrhry.app.domain.StationQrLookup
 import com.qrhry.app.domain.StationDraft
+import com.qrhry.app.domain.StationMediaType
 import com.qrhry.app.qr.StationQrCodeGenerator
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 
 private data class StationFormState(
     val title: String = "",
-    val bodyText: String = ""
+    val bodyText: String = "",
+    val imageUri: Uri? = null,
+    val audioUri: Uri? = null
+)
+
+private data class PendingMediaPick(
+    val mediaType: StationMediaType,
+    val onPicked: (Uri) -> Unit
 )
 
 @Composable
 fun GameScreen(viewModel: GameViewModel, onLaunchQrScanner: () -> Unit) {
     val state by viewModel.state.collectAsState()
+    var pendingPick by remember { mutableStateOf<PendingMediaPick?>(null) }
+    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val target = pendingPick
+        pendingPick = null
+        if (uri != null) target?.onPicked?.invoke(uri)
+    }
+    val pickMedia: (StationMediaType, (Uri) -> Unit) -> Unit = { mediaType, callback ->
+        pendingPick = PendingMediaPick(mediaType, callback)
+        mediaPicker.launch(arrayOf(if (mediaType == StationMediaType.IMAGE) "image/*" else "audio/*"))
+    }
 
     BackHandler(enabled = state.route != GameScreenRoute.HOME) {
         viewModel.navigateBack()
@@ -57,7 +97,18 @@ fun GameScreen(viewModel: GameViewModel, onLaunchQrScanner: () -> Unit) {
             onCreate = viewModel::openCreate,
             onPlay = viewModel::openPlayList
         )
-        GameScreenRoute.CREATE -> GameLibraryScreen(state, viewModel)
+        GameScreenRoute.CREATE -> GameLibraryScreen(state, viewModel, pickMedia)
+        GameScreenRoute.EDIT_STATION -> state.editingStation?.let { station ->
+            StationEditScreen(
+                station = station,
+                isSaving = state.isSavingStation,
+                error = state.error,
+                onPickMedia = pickMedia,
+                onRemoveMedia = viewModel::removeStationMedia,
+                onSave = viewModel::saveStationContent,
+                onCancel = viewModel::cancelStationEdit
+            )
+        }
         GameScreenRoute.PLAY_LIST -> PlayListScreen(state, viewModel)
         GameScreenRoute.PLAY_SESSION -> state.sessionProgress?.let { progress ->
             PlaySessionScreen(
@@ -103,7 +154,8 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit) {
 @Composable
 private fun GameLibraryScreen(
     state: GameScreenState,
-    viewModel: GameViewModel
+    viewModel: GameViewModel,
+    onPickMedia: (StationMediaType, (Uri) -> Unit) -> Unit
 ) {
     var gameTitle by remember { mutableStateOf("") }
     var stationForms by remember {
@@ -162,6 +214,20 @@ private fun GameLibraryScreen(
                     label = { Text("Station text") },
                     minLines = 2
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        onPickMedia(StationMediaType.IMAGE) { uri ->
+                            stationForms = stationForms.updated(index) { it.copy(imageUri = uri) }
+                        }
+                    }) { Text(if (form.imageUri == null) "Choose image" else "Replace image") }
+                    OutlinedButton(onClick = {
+                        onPickMedia(StationMediaType.AUDIO) { uri ->
+                            stationForms = stationForms.updated(index) { it.copy(audioUri = uri) }
+                        }
+                    }) { Text(if (form.audioUri == null) "Choose audio" else "Replace audio") }
+                }
+                form.imageUri?.let { Text("Image selected: ${it.lastPathSegment}") }
+                form.audioUri?.let { Text("Audio selected: ${it.lastPathSegment}") }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -184,7 +250,8 @@ private fun GameLibraryScreen(
                 onClick = {
                     viewModel.createGame(
                         gameTitle,
-                        stationForms.map { StationDraft(it.title, it.bodyText) }
+                        stationForms.map { StationDraft(it.title, it.bodyText) },
+                        stationForms.map { it.imageUri to it.audioUri }
                     )
                 },
                 enabled = !state.isSaving,
@@ -200,7 +267,9 @@ private fun GameLibraryScreen(
             } else if (state.games.isEmpty()) {
                 Text("No games yet.")
             } else {
-                state.games.forEach { game -> SavedGame(game) }
+                state.games.forEach { game ->
+                    SavedGame(game, onEditStation = viewModel::editStation)
+                }
             }
         }
     }
@@ -277,6 +346,12 @@ private fun PlaySessionScreen(
                 Text("Next station", style = MaterialTheme.typography.titleMedium)
                 Text(next.title, style = MaterialTheme.typography.headlineSmall)
                 if (next.bodyText.isNotBlank()) Text(next.bodyText)
+                next.media.filter { it.mediaType == StationMediaType.IMAGE }.forEach { media ->
+                    StationImage(media)
+                }
+                next.media.filter { it.mediaType == StationMediaType.AUDIO }.forEach { media ->
+                    StationAudioPlayer(media)
+                }
             }
             Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
                 Text("Scan next station")
@@ -296,7 +371,7 @@ private fun PlaySessionScreen(
 }
 
 @Composable
-private fun SavedGame(game: Game) {
+private fun SavedGame(game: Game, onEditStation: (com.qrhry.app.domain.Station) -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -312,6 +387,9 @@ private fun SavedGame(game: Game) {
                     station = station,
                     modifier = Modifier.size(144.dp)
                 )
+                OutlinedButton(onClick = { onEditStation(station) }) {
+                    Text("Edit station content")
+                }
             }
         }
     }
@@ -382,12 +460,132 @@ private fun StationDetailScreen(lookup: StationQrLookup, onBack: () -> Unit) {
         Text(lookup.gameTitle, style = MaterialTheme.typography.titleMedium)
         Text(lookup.station.title, style = MaterialTheme.typography.headlineSmall)
         Text(lookup.station.bodyText.ifBlank { "This station has no text." })
+        lookup.station.media.filter { it.mediaType == StationMediaType.IMAGE }.forEach { StationImage(it) }
+        lookup.station.media.filter { it.mediaType == StationMediaType.AUDIO }.forEach { StationAudioPlayer(it) }
         StationQrImage(lookup.station, Modifier.size(224.dp))
         OutlinedButton(onClick = onBack) {
             Text("Back to scanner")
         }
     }
 }
+
+@Composable
+private fun StationEditScreen(
+    station: com.qrhry.app.domain.Station,
+    isSaving: Boolean,
+    error: String?,
+    onPickMedia: (StationMediaType, (Uri) -> Unit) -> Unit,
+    onRemoveMedia: (Long, StationMediaType) -> Unit,
+    onSave: (Long, String, String, Uri?, Uri?) -> Unit,
+    onCancel: () -> Unit
+) {
+    var title by remember(station.id) { mutableStateOf(station.title) }
+    var bodyText by remember(station.id) { mutableStateOf(station.bodyText) }
+    var imageUri by remember(station.id) { mutableStateOf<Uri?>(null) }
+    var audioUri by remember(station.id) { mutableStateOf<Uri?>(null) }
+    val image = station.media.firstOrNull { it.mediaType == StationMediaType.IMAGE }
+    val audio = station.media.firstOrNull { it.mediaType == StationMediaType.AUDIO }
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Edit station", style = MaterialTheme.typography.headlineSmall)
+        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("Title") })
+        OutlinedTextField(bodyText, { bodyText = it }, Modifier.fillMaxWidth(), label = { Text("Body text") }, minLines = 3)
+        Text(if (imageUri != null) "New image selected" else image?.originalFilename ?: "No image")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { onPickMedia(StationMediaType.IMAGE) { imageUri = it } }) {
+                Text(if (image == null) "Choose image" else "Replace image")
+            }
+            if (image != null) OutlinedButton(onClick = { onRemoveMedia(station.id, StationMediaType.IMAGE) }) {
+                Text("Remove image")
+            }
+        }
+        Text(if (audioUri != null) "New audio selected" else audio?.originalFilename ?: "No audio")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { onPickMedia(StationMediaType.AUDIO) { audioUri = it } }) {
+                Text(if (audio == null) "Choose audio" else "Replace audio")
+            }
+            if (audio != null) OutlinedButton(onClick = { onRemoveMedia(station.id, StationMediaType.AUDIO) }) {
+                Text("Remove audio")
+            }
+        }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        Button(
+            onClick = { onSave(station.id, title, bodyText, imageUri, audioUri) },
+            enabled = !isSaving,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text(if (isSaving) "Saving..." else "Save station") }
+        OutlinedButton(onClick = onCancel) { Text("Cancel") }
+    }
+}
+
+@Composable
+private fun StationImage(media: com.qrhry.app.domain.StationMedia) {
+    if (!media.isAvailable || media.localPath == null) {
+        Text("Image unavailable: ${media.originalFilename ?: "stored image"}")
+        return
+    }
+    val bitmap by produceState<Bitmap?>(initialValue = null, media.localPath) {
+        value = withContext(Dispatchers.IO) { decodeSampledBitmap(media.localPath) }
+    }
+    if (bitmap == null) {
+        Text("Image could not be loaded: ${media.originalFilename ?: "stored image"}")
+    } else {
+        Image(
+            bitmap = bitmap!!.asImageBitmap(),
+            contentDescription = media.originalFilename ?: "Station image",
+            modifier = Modifier.fillMaxWidth().height(240.dp),
+            contentScale = ContentScale.Fit
+        )
+    }
+}
+
+private fun decodeSampledBitmap(path: String): Bitmap? = runCatching {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+    var sampleSize = 1
+    while (bounds.outWidth / sampleSize > 1600 || bounds.outHeight / sampleSize > 1600) {
+        sampleSize *= 2
+    }
+    BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sampleSize })
+}.getOrNull()
+
+@Composable
+private fun StationAudioPlayer(media: com.qrhry.app.domain.StationMedia) {
+    val context = LocalContext.current
+    val path = media.localPath
+    if (!media.isAvailable || path == null || !File(path).isFile) {
+        Text("Audio unavailable: ${media.originalFilename ?: "stored audio"}")
+        return
+    }
+    var playbackError by remember(path) { mutableStateOf(false) }
+    val player = remember(path) {
+        ExoPlayer.Builder(context).build().apply {
+            addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    playbackError = true
+                }
+            })
+            setMediaItem(MediaItem.fromUri(Uri.fromFile(File(path))))
+            prepare()
+        }
+    }
+    DisposableEffect(player) { onDispose { player.release() } }
+    if (playbackError) {
+        Text("Audio could not be played: ${media.originalFilename ?: "stored audio"}")
+    } else {
+        AndroidView(
+            factory = { viewContext -> PlayerView(viewContext).apply { this.player = player } },
+            update = { it.player = player },
+            modifier = Modifier.fillMaxWidth().height(64.dp)
+        )
+    }
+}
+
+private fun <T> List<T>.updated(index: Int, transform: (T) -> T): List<T> =
+    mapIndexed { itemIndex, item -> if (itemIndex == index) transform(item) else item }
 
 @Composable
 private fun StationQrImage(station: Station, modifier: Modifier = Modifier) {
@@ -400,6 +598,3 @@ private fun StationQrImage(station: Station, modifier: Modifier = Modifier) {
         modifier = modifier
     )
 }
-
-private fun <T> List<T>.updated(index: Int, transform: (T) -> T): List<T> =
-    mapIndexed { itemIndex, item -> if (itemIndex == index) transform(item) else item }
