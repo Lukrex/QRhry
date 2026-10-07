@@ -10,11 +10,14 @@
 - [x] Scan a versioned station QR payload and resolve it from SQLite.
 - [x] Show distinct malformed/unknown results and navigate valid scans to station details.
 - [x] Add domain validation and database/core tests.
-- [ ] Build and run the app on an emulator or device.
+- [x] Separate Create/Edit and Play entry points.
+- [x] Persist sessions and ordered station visits; restore unfinished sessions.
+- [x] Enforce ordered scans, prevent duplicate visits, and persist completion.
+- [ ] Run the app manually on an emulator or device.
 
 ## Next
 
-- Add a locally persisted play session and ordered station progression.
+- Add editable games/stations if needed, preserving stable QR identifiers.
 
 ## Later, out of current scope
 

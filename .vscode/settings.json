@@ -3,6 +3,10 @@
         "/^Get-ChildItem \"\\$env:USERPROFILE\\\\\\.gradle\\\\caches\\\\modules-2\\\\files-2\\.1\\\\org\\.jetbrains\\.kotlin\\.android\\\\org\\.jetbrains\\.kotlin\\.android\\.gradle\\.plugin\" -ErrorAction SilentlyContinue \\| Select-Object -ExpandProperty Name; Get-ChildItem \"\\$env:USERPROFILE\\\\\\.gradle\\\\caches\\\\modules-2\\\\files-2\\.1\\\\com\\.android\\.tools\\.build\\\\gradle\" -ErrorAction SilentlyContinue \\| Select-Object -ExpandProperty Name; Get-ChildItem \"\\$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\system-images\" -ErrorAction SilentlyContinue \\| Select-Object -First 10 Name; Get-Command \"\\$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\platform-tools\\\\adb\\.exe\" -ErrorAction SilentlyContinue \\| Select-Object Source$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^git log -5 --oneline --decorate; git reflog -8 --date=relative; git diff --stat HEAD; git diff --cached --stat$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

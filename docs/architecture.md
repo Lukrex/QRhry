@@ -23,15 +23,21 @@ local flow is:
 - `MainActivity` invokes Google Play Services Code Scanner and passes its result
   to the ViewModel. This avoids camera permission and camera lifecycle code in
   the app; scanning requires compatible Google Play Services on the device.
+- `GameRepository` owns session creation/resumption and validates/records station
+  scans transactionally. The next station is derived from `position` and the
+  session's persisted visits; no next-station link is stored on `Station`.
 
 Stations are stored in user-defined order and receive a stable UUID token when
-created. Scanned tokens are resolved in SQLite before the station detail screen
-is shown. Unknown identifiers and malformed payloads have distinct results.
-Play sessions and ordered gameplay progression are not implemented yet.
+created. Create/Edit and Play are separate top-level routes. Play restores active
+sessions from SQLite and offers Continue for an unfinished game. In the current
+prototype an accepted scan completes a station visit; reaching the final ordered
+station marks the persisted session complete. Completed sessions are retained.
 
 ## Extension direction
 
-Keep game data independent of the engine and UI. Add progression as a
-domain/repository operation rather than embedding station IDs or ordering rules
-in Compose. Future media and task content should have typed, ordered
-representations instead of accumulating unrelated nullable columns on `stations`.
+Keep game data independent of the engine and UI. Future media and task content
+should have typed, ordered representations instead of accumulating unrelated
+nullable columns on `stations`. If task completion later differs from scanning,
+model that lifecycle separately from `StationVisit`; add scoring and achievement
+events when those features are scoped. Branching should use explicit transition
+data or rules rather than a `next_station_id` on a station.

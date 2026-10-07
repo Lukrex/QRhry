@@ -1,7 +1,7 @@
 # Database
 
 The app uses raw SQLite through `SQLiteOpenHelper`; database operations are
-isolated in the data layer. The current schema version is 2.
+isolated in the data layer. The current schema version is 3.
 
 ## Tables
 
@@ -40,5 +40,36 @@ and unique, preserving station/game IDs, text, and position while assigning a
 UUID to every existing station. New station UUIDs are generated during the
 repository's create-game transaction.
 
-Gameplay-session tables are not yet part of the schema; add them with a
-migration when persisted play begins.
+## Gameplay sessions (version 3)
+
+### `game_sessions`
+
+| Column         | Definition                                          |
+| -------------- | --------------------------------------------------- |
+| `id`           | `INTEGER PRIMARY KEY AUTOINCREMENT`                 |
+| `game_id`      | Required foreign key to `games.id`, delete cascades |
+| `status`       | `IN_PROGRESS` or `COMPLETED`                        |
+| `created_at`   | Required Unix epoch milliseconds                    |
+| `updated_at`   | Required Unix epoch milliseconds                    |
+| `completed_at` | Nullable Unix epoch milliseconds                    |
+
+`index_game_sessions_one_active_per_game` is a partial unique index on
+`game_id` for `IN_PROGRESS` rows. It enforces at most one unfinished session
+per game while retaining any number of completed runs.
+
+### `station_visits`
+
+| Column       | Definition                                                  |
+| ------------ | ----------------------------------------------------------- |
+| `session_id` | Required foreign key to `game_sessions.id`, delete cascades |
+| `station_id` | Required foreign key to `stations.id`, delete cascades      |
+| `visited_at` | Required Unix epoch milliseconds                            |
+
+The composite primary key `(session_id, station_id)` makes visits idempotent.
+There is intentionally no duplicate `game_id` here. The repository checks the
+session's game against the scanned station inside the same write transaction
+that validates order and records the visit.
+
+The v2-to-v3 migration only creates the session tables and indexes; it does not
+rebuild or rewrite existing games, stations, or QR UUIDs. Upgrades from v1 run
+the existing v1-to-v2 migration followed by v2-to-v3.

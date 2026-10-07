@@ -36,19 +36,60 @@ class GameDatabaseHelper(
             )"""
         )
         db.execSQL("CREATE INDEX index_stations_game_id ON stations(game_id)")
+        createSessionTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         var version = oldVersion
-        if (version == 1) {
-            migrateV1ToV2(db)
-            version = 2
+        while (version < newVersion) {
+            when (version) {
+                1 -> {
+                    migrateV1ToV2(db)
+                    version = 2
+                }
+                2 -> {
+                    migrateV2ToV3(db)
+                    version = 3
+                }
+                else -> throw SQLiteException(
+                    "No migration is defined from database version $version to $newVersion."
+                )
+            }
         }
-        if (version != newVersion) {
-            throw SQLiteException(
-                "No migration is defined from database version $oldVersion to $newVersion."
-            )
-        }
+        if (version != newVersion) throw SQLiteException("Unsupported database version $newVersion.")
+    }
+
+    private fun migrateV2ToV3(db: SQLiteDatabase) {
+        createSessionTables(db)
+    }
+
+    private fun createSessionTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE game_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('IN_PROGRESS', 'COMPLETED')),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
+            )"""
+        )
+        db.execSQL(
+            """CREATE UNIQUE INDEX index_game_sessions_one_active_per_game
+                ON game_sessions(game_id) WHERE status = 'IN_PROGRESS'"""
+        )
+        db.execSQL(
+            """CREATE TABLE station_visits (
+                session_id INTEGER NOT NULL,
+                station_id INTEGER NOT NULL,
+                visited_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, station_id),
+                FOREIGN KEY (session_id) REFERENCES game_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (station_id) REFERENCES stations(id) ON DELETE CASCADE
+            )"""
+        )
+        db.execSQL("CREATE INDEX index_station_visits_station_id ON station_visits(station_id)")
     }
 
     private fun migrateV1ToV2(db: SQLiteDatabase) {
@@ -90,6 +131,6 @@ class GameDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "qrhry.db"
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
     }
 }
