@@ -1,1 +1,5 @@
 /AGENTS.md
+.gradle/
+**/build/
+local.properties
+.kotlin/
