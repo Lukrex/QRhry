@@ -22,11 +22,13 @@ import com.qrhry.app.domain.StationQrLookup
 import com.qrhry.app.domain.StationMedia
 import com.qrhry.app.domain.StationMediaType
 import com.qrhry.app.domain.TaskSubmissionResult
+import com.qrhry.app.domain.UserMessageException
+import com.qrhry.app.domain.UserMessageKey
 import java.util.UUID
 
 class GameRepository(private val databaseHelper: GameDatabaseHelper) {
     fun createGame(draft: GameDraft): Game {
-        GameDraftValidator.validationError(draft)?.let { throw IllegalArgumentException(it) }
+        GameDraftValidator.validationError(draft)?.let { throw UserMessageException(it) }
 
         val database = databaseHelper.writableDatabase
         val gameId = database.beginTransactionAndInsertGame(draft)
@@ -64,9 +66,9 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         replacements: List<StationMedia> = emptyList(),
         tasks: List<MultipleChoiceTaskDraft>? = null
     ): List<StationMedia>? {
-        require(title.isNotBlank()) { "Enter a station title." }
+        if (title.isBlank()) throw UserMessageException(UserMessageKey.STATION_TITLE_REQUIRED)
         tasks?.let { drafts ->
-            GameDraftValidator.taskValidationError(drafts)?.let { throw IllegalArgumentException(it) }
+            GameDraftValidator.taskValidationError(drafts)?.let { throw UserMessageException(it) }
         }
         val database = databaseHelper.writableDatabase
         val previous = mutableListOf<StationMedia>()
@@ -173,7 +175,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     "SELECT game_id FROM stations WHERE id = ?",
                     arrayOf(stationId.toString())
                 ).use { cursor ->
-                    check(cursor.moveToFirst()) { "Station $stationId does not exist." }
+                    check(cursor.moveToFirst()) { "station_missing:$stationId" }
                     cursor.getLong(0)
                 }
                 getStationMedia(database, stationId, media.mediaType)?.let(previous::add)
@@ -254,13 +256,13 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     "SELECT 1 FROM games WHERE id = ?",
                     arrayOf(gameId.toString())
                 ).use { it.moveToFirst() }
-                require(hasGame) { "The selected game does not exist." }
+                if (!hasGame) throw UserMessageException(UserMessageKey.GAME_UNAVAILABLE)
 
                 val hasStations = database.rawQuery(
                     "SELECT 1 FROM stations WHERE game_id = ? LIMIT 1",
                     arrayOf(gameId.toString())
                 ).use { it.moveToFirst() }
-                require(hasStations) { "The selected game has no stations." }
+                if (!hasStations) throw UserMessageException(UserMessageKey.GAME_HAS_NO_STATIONS)
 
                 val now = System.currentTimeMillis()
                 sessionId = database.insertOrThrow(
@@ -365,17 +367,21 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         database.beginTransaction()
         try {
             val session = getSession(database, sessionId)
-                ?: throw IllegalArgumentException("The game session is unavailable.")
-            check(session.status == GameSessionStatus.IN_PROGRESS) { "The game session is complete." }
-            val stationId = getTaskStationId(database, taskId)
-                ?: throw IllegalArgumentException("The task is unavailable.")
-            check(isCurrentVisitedStation(database, session, stationId)) {
-                "This task is not part of the current station."
+                ?: throw UserMessageException(UserMessageKey.SESSION_UNAVAILABLE)
+            if (session.status != GameSessionStatus.IN_PROGRESS) {
+                throw UserMessageException(UserMessageKey.SESSION_COMPLETED)
             }
-            check(!isTaskCompleted(database, sessionId, taskId)) { "This task is already complete." }
+            val stationId = getTaskStationId(database, taskId)
+                ?: throw UserMessageException(UserMessageKey.TASK_UNAVAILABLE)
+            if (!isCurrentVisitedStation(database, session, stationId)) {
+                throw UserMessageException(UserMessageKey.TASK_NOT_CURRENT)
+            }
+            if (isTaskCompleted(database, sessionId, taskId)) {
+                throw UserMessageException(UserMessageKey.TASK_ALREADY_COMPLETED)
+            }
             val task = getTasks(database, stationId).first { it.id == taskId }
             val option = task.options.firstOrNull { it.id == optionId }
-                ?: throw IllegalArgumentException("The selected answer is unavailable.")
+                ?: throw UserMessageException(UserMessageKey.ANSWER_UNAVAILABLE)
             val now = System.currentTimeMillis()
             val pendingId = database.rawQuery(
                 "SELECT id FROM task_attempts WHERE session_id = ? AND task_id = ? AND submitted_at IS NULL",
@@ -713,7 +719,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             "SELECT 1 FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS' LIMIT 1",
             arrayOf(gameId.toString())
         ).use { it.moveToFirst() }
-        check(!hasActiveSession) { "Tasks cannot be changed while this game has an active session." }
+        if (hasActiveSession) throw UserMessageException(UserMessageKey.TASK_EDIT_ACTIVE_SESSION)
 
         val retainedIds = drafts.map { it.id }.toSet()
         current.filter { it.id !in retainedIds }.forEach { task ->
@@ -721,7 +727,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 "SELECT 1 FROM task_attempts WHERE task_id = ? LIMIT 1",
                 arrayOf(task.id)
             ).use { it.moveToFirst() }
-            check(!hasAttempts) { "A task with saved attempts cannot be removed." }
+            if (hasAttempts) throw UserMessageException(UserMessageKey.TASK_DELETE_HAS_ATTEMPTS)
         }
 
         database.execSQL("UPDATE tasks SET position = position + 100000 WHERE station_id = ?", arrayOf(stationId))

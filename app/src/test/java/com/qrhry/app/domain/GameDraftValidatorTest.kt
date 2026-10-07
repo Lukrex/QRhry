@@ -25,14 +25,14 @@ class GameDraftValidatorTest {
             stations = listOf(StationDraft("Start", ""), StationDraft("End", ""))
         )
 
-        assertEquals("Enter a game title.", GameDraftValidator.validationError(draft))
+        assertEquals(UserMessageKey.GAME_TITLE_REQUIRED, GameDraftValidator.validationError(draft))
     }
 
     @Test
     fun requiresAtLeastTwoStations() {
         val draft = GameDraft("Campus trail", listOf(StationDraft("Start", "")))
 
-        assertEquals("Add at least two stations.", GameDraftValidator.validationError(draft))
+        assertEquals(UserMessageKey.MINIMUM_STATIONS_REQUIRED, GameDraftValidator.validationError(draft))
     }
 
     @Test
@@ -43,7 +43,7 @@ class GameDraftValidatorTest {
         )
 
         assertEquals(
-            "Enter a title for every station.",
+            UserMessageKey.STATION_TITLE_REQUIRED,
             GameDraftValidator.validationError(draft)
         )
     }

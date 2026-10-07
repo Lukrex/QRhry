@@ -23,6 +23,9 @@ import com.qrhry.app.domain.StationScanResult
 import com.qrhry.app.domain.StationMedia
 import com.qrhry.app.domain.StationMediaType
 import com.qrhry.app.domain.TaskSubmissionResult
+import com.qrhry.app.domain.UserMessageException
+import com.qrhry.app.domain.UserMessageKey
+import com.qrhry.app.domain.messageKeyOr
 import com.qrhry.app.qr.QrPayloadParseResult
 import com.qrhry.app.qr.StationQrPayload
 import kotlinx.coroutines.Dispatchers
@@ -37,9 +40,10 @@ data class GameScreenState(
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val isLoadingSession: Boolean = false,
-    val error: String? = null,
+    val error: UserMessageKey? = null,
     val savedGameId: Long? = null,
     val route: GameScreenRoute = GameScreenRoute.HOME,
+    val settingsReturnRoute: GameScreenRoute = GameScreenRoute.HOME,
     val qrScanStatus: QrScanStatus = QrScanStatus.READY,
     val isLookingUpStation: Boolean = false,
     val selectedStation: StationQrLookup? = null,
@@ -55,6 +59,7 @@ data class GameScreenState(
 
 enum class GameScreenRoute {
     HOME,
+    SETTINGS,
     CREATE,
     EDIT_STATION,
     PLAY_LIST,
@@ -86,8 +91,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         mediaByStation: List<Pair<Uri?, Uri?>> = emptyList()
     ) {
         val draft = GameDraft(title, stations)
-        GameDraftValidator.validationError(draft)?.let { message ->
-            mutableState.value = mutableState.value.copy(error = message)
+        GameDraftValidator.validationError(draft)?.let { messageKey ->
+            mutableState.value = mutableState.value.copy(error = messageKey)
             return
         }
         if (mutableState.value.isSaving) return
@@ -134,7 +139,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             } catch (exception: Exception) {
                 mutableState.value = mutableState.value.copy(
                     isSaving = false,
-                    error = exception.message ?: "The game could not be saved."
+                    error = exception.messageKeyOr(UserMessageKey.GAME_SAVE_FAILED)
                 )
             }
         }
@@ -171,7 +176,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val result = withContext(Dispatchers.IO) {
                     val gameUuid = repository.getGameUuidForStation(stationId)
-                        ?: throw IllegalArgumentException("The station no longer exists.")
+                        ?: throw UserMessageException(UserMessageKey.STATION_UNAVAILABLE)
                     val image = imageUri?.let {
                         stageAndPromote(it, gameUuid, StationMediaType.IMAGE).also(promoted::add)
                     }
@@ -185,7 +190,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         listOfNotNull(image?.toMedia(stationId), audio?.toMedia(stationId)),
                         tasks
                     ) ?: run {
-                        throw IllegalStateException("The station could not be updated.")
+                        throw UserMessageException(UserMessageKey.STATION_UNAVAILABLE)
                     }
                     replaced.forEach { assetStore.delete(gameUuid, it.relativePath) }
                     repository.getAllGames().map(::hydrateGame)
@@ -200,7 +205,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) { promoted.forEach(assetStore::discard) }
                 mutableState.value = mutableState.value.copy(
                     isSavingStation = false,
-                    error = exception.message ?: "Station content could not be saved."
+                    error = exception.messageKeyOr(UserMessageKey.STATION_SAVE_FAILED)
                 )
             }
         }
@@ -224,7 +229,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 refreshGames()
             } catch (exception: Exception) {
-                mutableState.value = mutableState.value.copy(error = exception.message)
+                mutableState.value = mutableState.value.copy(error = exception.messageKeyOr(UserMessageKey.GENERIC_ERROR))
             }
         }
     }
@@ -243,7 +248,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 )
             } catch (exception: Exception) {
                 mutableState.value = mutableState.value.copy(
-                    error = exception.message ?: "The answer could not be selected."
+                    error = exception.messageKeyOr(UserMessageKey.ANSWER_SELECT_FAILED)
                 )
             }
         }
@@ -263,15 +268,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         taskSubmissionCorrect = result.isCorrect,
                         isSavingTaskAnswer = false
                     )
-                    TaskSubmissionResult.NoPendingSelection -> throw IllegalStateException("Select an answer first.")
-                    TaskSubmissionResult.TaskAlreadyCompleted -> throw IllegalStateException("This task is already complete.")
-                    TaskSubmissionResult.TaskUnavailable -> throw IllegalStateException("This task is not available at the current station.")
-                    TaskSubmissionResult.SessionUnavailable -> throw IllegalStateException("The game session is no longer active.")
+                    TaskSubmissionResult.NoPendingSelection -> throw UserMessageException(UserMessageKey.SELECT_ANSWER_FIRST)
+                    TaskSubmissionResult.TaskAlreadyCompleted -> throw UserMessageException(UserMessageKey.TASK_ALREADY_COMPLETED)
+                    TaskSubmissionResult.TaskUnavailable -> throw UserMessageException(UserMessageKey.TASK_NOT_CURRENT)
+                    TaskSubmissionResult.SessionUnavailable -> throw UserMessageException(UserMessageKey.SESSION_UNAVAILABLE)
                 }
             } catch (exception: Exception) {
                 mutableState.value = mutableState.value.copy(
                     isSavingTaskAnswer = false,
-                    error = exception.message ?: "The answer could not be submitted."
+                    error = exception.messageKeyOr(UserMessageKey.ANSWER_SUBMIT_FAILED)
                 )
             }
         }
@@ -374,7 +379,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             } catch (exception: Exception) {
                 mutableState.value = mutableState.value.copy(
                     isLoading = false,
-                    error = exception.message ?: "Saved games could not be loaded."
+                    error = exception.messageKeyOr(UserMessageKey.GAMES_LOAD_FAILED)
                 )
             }
         }
@@ -393,6 +398,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openCreate() {
         mutableState.value = mutableState.value.copy(route = GameScreenRoute.CREATE)
+    }
+
+    fun openSettings() {
+        mutableState.value = mutableState.value.copy(
+            settingsReturnRoute = mutableState.value.route,
+            route = GameScreenRoute.SETTINGS
+        )
     }
 
     fun openPlayList() {
@@ -421,7 +433,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             } catch (exception: Exception) {
                 mutableState.value = mutableState.value.copy(
                     isLoadingSession = false,
-                    error = exception.message ?: "The game session could not be started."
+                    error = exception.messageKeyOr(UserMessageKey.SESSION_START_FAILED)
                 )
             }
         }
@@ -501,7 +513,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     mutableState.value = mutableState.value.copy(
                         qrScanStatus = QrScanStatus.SCANNER_ERROR,
                         isLookingUpStation = false,
-                        error = exception.message
+                        error = UserMessageKey.SCANNER_LOOKUP_FAILED
                     )
                 }
             }
@@ -525,6 +537,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun navigateBack() {
         mutableState.value = when (mutableState.value.route) {
             GameScreenRoute.HOME -> mutableState.value
+            GameScreenRoute.SETTINGS -> mutableState.value.copy(route = mutableState.value.settingsReturnRoute)
             GameScreenRoute.CREATE, GameScreenRoute.EDIT_STATION, GameScreenRoute.PLAY_LIST -> mutableState.value.copy(
                 route = GameScreenRoute.HOME
             )

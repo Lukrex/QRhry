@@ -4,6 +4,8 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.webkit.MimeTypeMap
 import com.qrhry.app.domain.StationMediaType
+import com.qrhry.app.domain.UserMessageException
+import com.qrhry.app.domain.UserMessageKey
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -29,11 +31,11 @@ class GameAssetStore(private val filesDirectory: File) {
         mediaType: StationMediaType,
         originalFilename: String?
     ): ImportedAsset {
-        require(isUuid(gameUuid)) { "Game identity is invalid." }
+        if (!isUuid(gameUuid)) throw UserMessageException(UserMessageKey.MEDIA_GAME_ID_INVALID)
         val mimeType = resolver.getType(source)
-            ?: throw IllegalArgumentException("The selected file type could not be determined.")
-        require(isAllowedMimeType(mimeType, mediaType)) {
-            "The selected file is not a supported ${mediaType.name.lowercase()}."
+            ?: throw UserMessageException(UserMessageKey.MEDIA_TYPE_UNKNOWN)
+        if (!isAllowedMimeType(mimeType, mediaType)) {
+            throw UserMessageException(UserMessageKey.MEDIA_TYPE_UNSUPPORTED)
         }
         val mediaId = UUID.randomUUID().toString()
         val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
@@ -47,9 +49,9 @@ class GameAssetStore(private val filesDirectory: File) {
         try {
             resolver.openInputStream(source)?.use { input ->
                 FileOutputStream(temporaryFile).use { output -> input.copyTo(output) }
-            } ?: throw IllegalArgumentException("The selected file could not be opened.")
+            } ?: throw UserMessageException(UserMessageKey.MEDIA_OPEN_FAILED)
             val byteSize = temporaryFile.length()
-            require(byteSize > 0L) { "The selected file is empty." }
+            if (byteSize <= 0L) throw UserMessageException(UserMessageKey.MEDIA_EMPTY)
             val checksum = FileInputStream(temporaryFile).use(::sha256)
             return ImportedAsset(
                 mediaId = mediaId,
@@ -68,10 +70,9 @@ class GameAssetStore(private val filesDirectory: File) {
     }
 
     fun promote(asset: ImportedAsset) {
-        require(asset.temporaryFile.parentFile == asset.finalFile.parentFile)
-        check(asset.temporaryFile.renameTo(asset.finalFile)) {
-            "The selected file could not be stored."
-        }
+        if (asset.temporaryFile.parentFile != asset.finalFile.parentFile ||
+            !asset.temporaryFile.renameTo(asset.finalFile)
+        ) throw UserMessageException(UserMessageKey.MEDIA_STORE_FAILED)
     }
 
     fun discard(asset: ImportedAsset) {
@@ -80,12 +81,12 @@ class GameAssetStore(private val filesDirectory: File) {
     }
 
     fun resolve(gameUuid: String, relativePath: String): File {
-        require(isUuid(gameUuid)) { "Game identity is invalid." }
-        require(isSafeRelativePath(relativePath)) { "Stored media path is invalid." }
+        if (!isUuid(gameUuid)) throw UserMessageException(UserMessageKey.MEDIA_GAME_ID_INVALID)
+        if (!isSafeRelativePath(relativePath)) throw UserMessageException(UserMessageKey.MEDIA_PATH_INVALID)
         val gameRoot = File(File(filesDirectory, "games"), gameUuid).canonicalFile
         val target = File(gameRoot, relativePath).canonicalFile
-        require(target.path.startsWith(gameRoot.path + File.separator)) {
-            "Stored media path escapes its game directory."
+        if (!target.path.startsWith(gameRoot.path + File.separator)) {
+            throw UserMessageException(UserMessageKey.MEDIA_PATH_INVALID)
         }
         return target
     }

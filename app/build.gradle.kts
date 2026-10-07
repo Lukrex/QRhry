@@ -11,6 +11,7 @@ android {
         applicationId = "com.qrhry.app"
         minSdk = 23
         targetSdk = 34
+        resourceConfigurations += listOf("en", "sk")
         versionCode = 1
         versionName = "1.0"
 
@@ -38,6 +39,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
