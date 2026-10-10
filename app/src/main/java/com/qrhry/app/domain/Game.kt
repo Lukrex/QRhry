@@ -37,7 +37,8 @@ data class MultipleChoiceTask(
     override val stationId: Long,
     override val prompt: String,
     override val position: Int,
-    val options: List<TaskOption>
+    val options: List<TaskOption>,
+    val points: Int = 100
 ) : StationTask {
     override val type: StationTaskType = StationTaskType.MULTIPLE_CHOICE
 }
@@ -54,7 +55,8 @@ data class MultipleChoiceTaskDraft(
     val id: String,
     val prompt: String,
     val position: Int,
-    val options: List<TaskOptionDraft>
+    val options: List<TaskOptionDraft>,
+    val points: Int = 100
 )
 
 data class TaskOptionDraft(
@@ -83,7 +85,8 @@ data class TaskAttempt(
     val promptTextSnapshot: String,
     val correctness: Boolean?,
     val selectedAt: Long,
-    val submittedAt: Long?
+    val submittedAt: Long?,
+    val awardedPoints: Int = 0
 ) {
     val isPending: Boolean
         get() = submittedAt == null
@@ -97,6 +100,9 @@ data class TaskProgress(
 ) {
     val lastSubmittedAttempt: TaskAttempt?
         get() = attempts.lastOrNull { it.submittedAt != null }
+
+    val awardedPoints: Int
+        get() = attempts.firstOrNull { it.correctness == true && it.submittedAt != null }?.awardedPoints ?: 0
 }
 
 enum class StationMediaType {
@@ -148,6 +154,18 @@ data class GameSession(
     val completedAt: Long?
 )
 
+data class CompletedSessionResult(
+    val sessionId: Long,
+    val gameId: Long,
+    val gameTitle: String,
+    val completedAt: Long,
+    val score: Long,
+    val completedTaskCount: Int,
+    val totalTaskCount: Int?,
+    val completedStationCount: Int,
+    val totalStationCount: Int?
+)
+
 data class SessionProgress(
     val session: GameSession,
     val gameTitle: String,
@@ -157,7 +175,11 @@ data class SessionProgress(
     val completedStationIds: Set<Long> = emptySet(),
     val stationVisits: List<StationVisit> = emptyList(),
     val currentStation: Station? = null,
-    val taskProgress: List<TaskProgress> = emptyList()
+    val taskProgress: List<TaskProgress> = emptyList(),
+    val score: Long = 0L,
+    val completedTaskCount: Int = 0,
+    val resultTotalTaskCount: Int? = null,
+    val resultTotalStationCount: Int? = null
 ) {
     val completedStationCount: Int
         get() = completedStationIds.size
@@ -181,7 +203,11 @@ sealed interface StationScanResult {
 }
 
 sealed interface TaskSubmissionResult {
-    data class Submitted(val isCorrect: Boolean, val progress: SessionProgress) : TaskSubmissionResult
+    data class Submitted(
+        val isCorrect: Boolean,
+        val progress: SessionProgress,
+        val pointsAwarded: Int = 0
+    ) : TaskSubmissionResult
     data object NoPendingSelection : TaskSubmissionResult
     data object TaskAlreadyCompleted : TaskSubmissionResult
     data object TaskUnavailable : TaskSubmissionResult

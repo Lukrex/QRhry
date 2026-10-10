@@ -1,7 +1,7 @@
 # Database
 
 The app uses raw SQLite through `SQLiteOpenHelper`; database operations are
-isolated in the data layer. The current schema version is 5.
+isolated in the data layer. The current schema version is 6.
 
 ## Core tables
 
@@ -29,8 +29,13 @@ URIs.
 ### `game_sessions`
 
 `id`, `game_id`, `status` (`IN_PROGRESS`/`COMPLETED`), `created_at`, `updated_at`,
-and nullable `completed_at`. A partial unique index permits at most one active
-session per game while retaining completed runs.
+nullable `completed_at`, and nullable `total_task_count` / `total_station_count`
+snapshots. New sessions capture both totals at start. V5 active sessions are
+backfilled during migration; completed legacy sessions keep null totals because
+later task edits make their historical denominators unrecoverable. Their score
+is displayed as not recorded; the migration does not infer rewards from old
+correct attempts. A partial unique index permits at most one active session per
+game while retaining runs.
 
 ### `station_visits`
 
@@ -46,8 +51,9 @@ and ordered progression.
 
 UUID `id` primary key, `station_id` foreign key to `stations` with cascade,
 `type` constrained to `MULTIPLE_CHOICE`, nonblank `prompt`, nonnegative
-`position`, and `UNIQUE(station_id, position)`. Stations can have zero or more
-ordered tasks even though the initial editor exposes at most one.
+`position`, nonnegative integer `points` (default 100), and
+`UNIQUE(station_id, position)`. Stations can have zero or more ordered tasks
+even though the initial editor exposes at most one.
 
 ### `task_options`
 
@@ -62,11 +68,14 @@ exactly one correct option.
 UUID `id`, `session_id` foreign key to `game_sessions` with cascade, `task_id`
 foreign key to `tasks` with restrict, `selected_option_id` (intentionally not a
 foreign key), selected-option and prompt text snapshots, nullable `correctness`,
-`selected_at`, and nullable `submitted_at`. A null `submitted_at` denotes the
-persisted pending selection. A check constraint requires pending rows to have
-null correctness and submitted rows to have a correctness value. A partial
-unique index allows at most one pending row per `(session_id, task_id)`;
-submitted wrong and correct attempts are retained.
+`selected_at`, nullable `submitted_at`, and nonnegative `awarded_points` (default
+0). A null `submitted_at` denotes the persisted pending selection. A check
+constraint requires pending rows to have null correctness and submitted rows to
+have a correctness value. A partial unique index allows at most one pending row
+per `(session_id, task_id)`; submitted wrong and correct attempts are retained.
+Correctness and awarded points are committed atomically. Wrong answers award
+zero; a successful task stores its configured points once. Score is summed from
+immutable awards rather than recalculated from mutable task definitions.
 
 Task completion is derived from a submitted correct attempt. Station completion
 is stored on `station_visits.completed_at` and occurs on scan for taskless
@@ -90,7 +99,11 @@ a path is undefined; it never silently drops user data.
   `visited_at` because v4 scans completed stations, and creates `tasks`,
   `task_options`, `task_attempts`, and their indexes. It does not rewrite games,
   stations, QR UUIDs, sessions, media metadata, or media files.
+- **v5→v6** adds task points (default 100), attempt awards (default zero), and
+  nullable session task/station totals. It backfills totals only for active
+  sessions and does not rewrite or delete existing rows. Existing attempts
+  receive zero points so pre-scoring answers are never retroactively rewarded.
 
-Fresh databases are created directly with the complete v5 schema. The v2→v3
+Fresh databases are created directly with the complete v6 schema. The v2→v3
 migration deliberately creates the historical v3 visit shape so the following
-v4→v5 step can add `completed_at` exactly once.
+v4→v5 step can add `completed_at` exactly once before v5→v6 adds scoring.

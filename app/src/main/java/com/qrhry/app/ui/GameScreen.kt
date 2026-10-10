@@ -37,6 +37,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -78,6 +80,8 @@ import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.DateFormat
+import java.util.Date
 import java.util.UUID
 
 private data class StationFormState(
@@ -97,6 +101,7 @@ private data class TaskOptionFormState(
 private data class MultipleChoiceTaskFormState(
     val id: String = UUID.randomUUID().toString(),
     val prompt: String = "",
+    val pointsText: String = "100",
     val options: List<TaskOptionFormState> = listOf(TaskOptionFormState(), TaskOptionFormState())
 )
 
@@ -104,6 +109,7 @@ private fun MultipleChoiceTaskFormState.toDraft(position: Int) = MultipleChoiceT
     id = id,
     prompt = prompt,
     position = position,
+    points = pointsText.toIntOrNull() ?: -1,
     options = options.mapIndexed { index, option ->
         TaskOptionDraft(option.id, option.text, index, option.isCorrect)
     }
@@ -112,6 +118,7 @@ private fun MultipleChoiceTaskFormState.toDraft(position: Int) = MultipleChoiceT
 private fun MultipleChoiceTask.toFormState() = MultipleChoiceTaskFormState(
     id = id,
     prompt = prompt,
+    pointsText = points.toString(),
     options = options.map { TaskOptionFormState(it.id, it.text, it.isCorrect) }
 )
 
@@ -139,6 +146,7 @@ private class DraftTokenReader(private val values: List<String>) {
         if (next() != "1") return null
         val taskId = next()
         val prompt = next()
+        val pointsText = next()
         val options = List(nextInt()) {
             TaskOptionFormState(
                 id = next(),
@@ -146,7 +154,7 @@ private class DraftTokenReader(private val values: List<String>) {
                 isCorrect = next().toBoolean()
             )
         }
-        return MultipleChoiceTaskFormState(taskId, prompt, options)
+        return MultipleChoiceTaskFormState(taskId, prompt, pointsText, options)
     }
 
     fun nextRequiredTask(): MultipleChoiceTaskFormState = checkNotNull(nextTask())
@@ -157,6 +165,7 @@ private fun MutableList<String>.appendTask(task: MultipleChoiceTaskFormState?) {
     if (task == null) return
     add(task.id)
     add(task.prompt)
+    add(task.pointsText)
     add(task.options.size.toString())
     task.options.forEach { option ->
         add(option.id)
@@ -278,7 +287,6 @@ fun GameScreen(viewModel: GameViewModel, onLaunchQrScanner: () -> Unit) {
                 scanResult = state.stationScanResult,
                 isLoading = state.isLoadingSession,
                 isSubmittingAnswer = state.isSavingTaskAnswer,
-                taskSubmissionCorrect = state.taskSubmissionCorrect,
                 onSelectOption = viewModel::selectTaskOption,
                 onSubmitTask = viewModel::submitTaskAnswer,
                 onScan = viewModel::openSessionScanner,
@@ -379,6 +387,7 @@ private fun userMessageText(key: UserMessageKey): String = stringResource(
         UserMessageKey.OPTION_TEXT_REQUIRED -> R.string.error_option_text_required
         UserMessageKey.EXACTLY_ONE_CORRECT_OPTION_REQUIRED -> R.string.error_one_correct_option
         UserMessageKey.OPTION_ID_INVALID -> R.string.error_option_identity
+        UserMessageKey.TASK_POINTS_INVALID -> R.string.error_task_points
         UserMessageKey.GAME_UNAVAILABLE -> R.string.error_game_unavailable
         UserMessageKey.GAME_HAS_NO_STATIONS -> R.string.error_game_no_stations
         UserMessageKey.STATION_UNAVAILABLE -> R.string.error_station_unavailable
@@ -594,6 +603,39 @@ private fun PlayListScreen(state: GameScreenState, viewModel: GameViewModel) {
                         ) {
                             Text(stringResource(if (activeSession == null) R.string.start else R.string.continue_game))
                         }
+                        val gameResults = state.completedSessions.filter { it.gameId == game.id }
+                        if (gameResults.isNotEmpty()) {
+                            Text(stringResource(R.string.completed_runs), style = MaterialTheme.typography.titleSmall)
+                            gameResults.forEach { result ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        if (result.totalTaskCount == null || result.totalStationCount == null) {
+                                            stringResource(
+                                                R.string.completed_run_legacy_summary,
+                                                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                                                    .format(Date(result.completedAt))
+                                            )
+                                        } else {
+                                            stringResource(
+                                                R.string.completed_run_summary,
+                                                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                                                    .format(Date(result.completedAt)),
+                                                result.score
+                                            )
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedButton(
+                                        onClick = { viewModel.openCompletedSession(result.sessionId) },
+                                        enabled = !state.isLoadingSession
+                                    ) { Text(stringResource(R.string.view_results)) }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -608,7 +650,6 @@ private fun PlaySessionScreen(
     scanResult: StationScanResult?,
     isLoading: Boolean,
     isSubmittingAnswer: Boolean,
-    taskSubmissionCorrect: Boolean?,
     onSelectOption: (String, String) -> Unit,
     onSubmitTask: (String) -> Unit,
     onScan: () -> Unit,
@@ -616,7 +657,8 @@ private fun PlaySessionScreen(
 ) {
     val acceptedScan = scanResult as? StationScanResult.Accepted
     val completedScanStation = acceptedScan?.station?.takeIf { it.id in progress.completedStationIds }
-    val displayedStation = progress.currentStation ?: completedScanStation
+    val isCompleted = progress.session.status == GameSessionStatus.COMPLETED
+    val displayedStation = if (isCompleted) null else progress.currentStation ?: completedScanStation
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -626,10 +668,19 @@ private fun PlaySessionScreen(
     ) {
         OutlinedButton(onClick = onBack) { Text(stringResource(R.string.back_to_play)) }
         Text(progress.gameTitle, style = MaterialTheme.typography.titleLarge)
-        Text(
-            stringResource(R.string.progress_count, progress.completedStationCount, progress.totalStationCount),
-            style = MaterialTheme.typography.titleMedium
-        )
+        if (!isCompleted) {
+            Text(
+                stringResource(R.string.progress_count, progress.completedStationCount, progress.totalStationCount),
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                pluralStringResource(
+                    R.plurals.current_score,
+                    progress.score.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                    progress.score
+                )
+            )
+        }
         displayedStation?.let { station ->
             Text(
                 stringResource(
@@ -643,8 +694,41 @@ private fun PlaySessionScreen(
             station.media.filter { it.mediaType == StationMediaType.IMAGE }.forEach { StationImage(it) }
             station.media.filter { it.mediaType == StationMediaType.AUDIO }.forEach { StationAudioPlayer(it) }
         }
-        if (progress.session.status == GameSessionStatus.COMPLETED) {
+        if (isCompleted) {
             Text(stringResource(R.string.game_completed), style = MaterialTheme.typography.headlineSmall)
+            if (progress.resultTotalTaskCount == null || progress.resultTotalStationCount == null) {
+                Text(stringResource(R.string.result_score_unavailable))
+            } else {
+                Text(
+                    pluralStringResource(
+                        R.plurals.result_score,
+                        progress.score.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                        progress.score
+                    )
+                )
+            }
+            Text(
+                if (progress.resultTotalTaskCount == null) {
+                    stringResource(R.string.result_tasks_total_unavailable, progress.completedTaskCount)
+                } else {
+                    stringResource(
+                        R.string.result_tasks_completed,
+                        progress.completedTaskCount,
+                        progress.resultTotalTaskCount
+                    )
+                }
+            )
+            Text(
+                if (progress.resultTotalStationCount == null) {
+                    stringResource(R.string.result_stations_total_unavailable, progress.completedStationCount)
+                } else {
+                    stringResource(
+                        R.string.result_stations_completed,
+                        progress.completedStationCount,
+                        progress.resultTotalStationCount
+                    )
+                }
+            )
         } else if (progress.currentStation != null) {
             progress.taskProgress.forEach { taskProgress ->
                 MultipleChoiceTaskPlayer(
@@ -666,11 +750,6 @@ private fun PlaySessionScreen(
                 Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.scan_station))
                 }
-            }
-        }
-        if (progress.currentStation == null) {
-            taskSubmissionCorrect?.let { correct ->
-                Text(stringResource(if (correct) R.string.correct_answer else R.string.incorrect_try_again))
             }
         }
         scanResult?.let { result ->
@@ -973,6 +1052,14 @@ private fun MultipleChoiceTaskEditor(
             modifier = Modifier.fillMaxWidth(),
             label = { Text(stringResource(R.string.question)) }
         )
+        OutlinedTextField(
+            value = task.pointsText,
+            onValueChange = { onChange(task.copy(pointsText = it)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text(stringResource(R.string.task_points)) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true
+        )
         task.options.forEachIndexed { index, option ->
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 RadioButton(
@@ -1033,7 +1120,13 @@ private fun MultipleChoiceTaskPlayer(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(progress.task.prompt, style = MaterialTheme.typography.titleLarge)
         if (progress.isCompleted) {
-            Text(stringResource(R.string.task_complete))
+            Text(
+                pluralStringResource(
+                    R.plurals.task_complete_points,
+                    progress.awardedPoints,
+                    progress.awardedPoints
+                )
+            )
         } else {
             if (progress.pendingAttempt == null) {
                 progress.lastSubmittedAttempt?.takeIf { it.correctness == false }?.let {

@@ -10,6 +10,7 @@ import com.qrhry.app.domain.MultipleChoiceTask
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
 import com.qrhry.app.domain.GameSession
 import com.qrhry.app.domain.GameSessionStatus
+import com.qrhry.app.domain.CompletedSessionResult
 import com.qrhry.app.domain.TaskOption
 import com.qrhry.app.domain.TaskOptionDraft
 import com.qrhry.app.domain.TaskAttempt
@@ -241,6 +242,29 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             arrayOf(gameId.toString())
         ).use { cursor -> if (cursor.moveToFirst()) cursor.toGameSession() else null }
 
+    fun getCompletedSessionResults(): List<CompletedSessionResult> {
+        val results = mutableListOf<CompletedSessionResult>()
+        databaseHelper.readableDatabase.rawQuery(
+            """SELECT game_sessions.id, game_sessions.game_id, games.title, game_sessions.completed_at,
+                COALESCE((SELECT SUM(awarded_points) FROM task_attempts
+                    WHERE task_attempts.session_id = game_sessions.id), 0),
+                (SELECT COUNT(DISTINCT task_id) FROM task_attempts
+                    WHERE task_attempts.session_id = game_sessions.id
+                        AND correctness = 1 AND submitted_at IS NOT NULL),
+                game_sessions.total_task_count,
+                (SELECT COUNT(*) FROM station_visits
+                    WHERE station_visits.session_id = game_sessions.id AND completed_at IS NOT NULL),
+                game_sessions.total_station_count
+                FROM game_sessions INNER JOIN games ON games.id = game_sessions.game_id
+                WHERE game_sessions.status = 'COMPLETED'
+                ORDER BY game_sessions.completed_at DESC, game_sessions.id DESC""",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) results += cursor.toCompletedSessionResult()
+        }
+        return results
+    }
+
     fun startOrResumeSession(gameId: Long): SessionProgress {
         val database = databaseHelper.writableDatabase
         var sessionId: Long? = null
@@ -273,6 +297,14 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                         put("status", GameSessionStatus.IN_PROGRESS.name)
                         put("created_at", now)
                         put("updated_at", now)
+                        put("total_task_count", database.rawQuery(
+                            "SELECT COUNT(*) FROM tasks INNER JOIN stations ON stations.id = tasks.station_id WHERE stations.game_id = ?",
+                            arrayOf(gameId.toString())
+                        ).use { cursor -> cursor.moveToFirst(); cursor.getInt(0) })
+                        put("total_station_count", database.rawQuery(
+                            "SELECT COUNT(*) FROM stations WHERE game_id = ?",
+                            arrayOf(gameId.toString())
+                        ).use { cursor -> cursor.moveToFirst(); cursor.getInt(0) })
                     }
                 )
             }
@@ -421,6 +453,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
     fun submitTaskAttempt(sessionId: Long, taskId: String): TaskSubmissionResult {
         val database = databaseHelper.writableDatabase
         var correctness: Boolean? = null
+        var awardedPoints = 0
         database.beginTransaction()
         try {
             val session = getSession(database, sessionId)
@@ -437,10 +470,11 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 ?: return TaskSubmissionResult.NoPendingSelection
             val task = getTasks(database, stationId).first { it.id == taskId }
             correctness = task.options.firstOrNull { it.id == pending.second }?.isCorrect == true
+            awardedPoints = if (correctness == true) task.points else 0
             val now = System.currentTimeMillis()
             database.execSQL(
-                "UPDATE task_attempts SET correctness = ?, submitted_at = ? WHERE id = ? AND submitted_at IS NULL",
-                arrayOf(if (correctness == true) 1 else 0, now, pending.first)
+                "UPDATE task_attempts SET correctness = ?, submitted_at = ?, awarded_points = ? WHERE id = ? AND submitted_at IS NULL",
+                arrayOf(if (correctness == true) 1 else 0, now, awardedPoints, pending.first)
             )
             completeStation(database, session, stationId, now)
             database.execSQL("UPDATE game_sessions SET updated_at = ? WHERE id = ?", arrayOf(now, sessionId))
@@ -448,9 +482,11 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         } finally {
             database.endTransaction()
         }
+        val progress = checkNotNull(getSessionProgress(sessionId))
         return TaskSubmissionResult.Submitted(
             isCorrect = checkNotNull(correctness),
-            progress = checkNotNull(getSessionProgress(sessionId))
+            progress = progress,
+            pointsAwarded = awardedPoints
         )
     }
 
@@ -496,6 +532,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         val currentStation = stations.firstOrNull { station ->
             visits.any { it.stationId == station.id && !it.isCompleted }
         }
+        val sessionTotals = getSessionTotals(database, session.id)
+        val resultTotals = getSessionResultTotals(database, session.id)
         return SessionProgress(
             session = session,
             gameTitle = gameTitle,
@@ -505,9 +543,34 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             completedStationIds = completedIds,
             stationVisits = visits,
             currentStation = currentStation,
-            taskProgress = currentStation?.tasks?.map { getTaskProgress(database, session.id, it) }.orEmpty()
+            taskProgress = currentStation?.tasks?.map { getTaskProgress(database, session.id, it) }.orEmpty(),
+            score = sessionTotals.first,
+            completedTaskCount = sessionTotals.second,
+            resultTotalTaskCount = resultTotals.first,
+            resultTotalStationCount = resultTotals.second
         )
     }
+
+    private fun getSessionTotals(database: SQLiteDatabase, sessionId: Long): Pair<Long, Int> =
+        database.rawQuery(
+            """SELECT COALESCE(SUM(awarded_points), 0), COUNT(DISTINCT CASE
+                WHEN correctness = 1 AND submitted_at IS NOT NULL THEN task_id END)
+                FROM task_attempts WHERE session_id = ?""",
+            arrayOf(sessionId.toString())
+        ).use { cursor ->
+            cursor.moveToFirst()
+            cursor.getLong(0) to cursor.getInt(1)
+        }
+
+    private fun getSessionResultTotals(database: SQLiteDatabase, sessionId: Long): Pair<Int?, Int?> =
+        database.rawQuery(
+            "SELECT total_task_count, total_station_count FROM game_sessions WHERE id = ?",
+            arrayOf(sessionId.toString())
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null to null
+            (if (cursor.isNull(0)) null else cursor.getInt(0)) to
+                (if (cursor.isNull(1)) null else cursor.getInt(1))
+        }
 
     private fun findNextStation(
         database: SQLiteDatabase,
@@ -600,7 +663,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         val attempts = mutableListOf<TaskAttempt>()
         database.rawQuery(
             """SELECT id, session_id, task_id, selected_option_id, selected_option_text_snapshot,
-                prompt_text_snapshot, correctness, selected_at, submitted_at
+                prompt_text_snapshot, correctness, selected_at, submitted_at, awarded_points
                 FROM task_attempts WHERE session_id = ? AND task_id = ? ORDER BY selected_at, id""",
             arrayOf(sessionId.toString(), task.id)
         ).use { cursor ->
@@ -613,7 +676,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 promptTextSnapshot = cursor.getString(5),
                 correctness = if (cursor.isNull(6)) null else cursor.getInt(6) != 0,
                 selectedAt = cursor.getLong(7),
-                submittedAt = if (cursor.isNull(8)) null else cursor.getLong(8)
+                submittedAt = if (cursor.isNull(8)) null else cursor.getLong(8),
+                awardedPoints = cursor.getInt(9)
             )
         }
         return TaskProgress(
@@ -671,7 +735,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
     private fun getTasks(database: SQLiteDatabase, stationId: Long): List<MultipleChoiceTask> {
         val tasks = mutableListOf<MultipleChoiceTask>()
         database.rawQuery(
-            "SELECT id, station_id, prompt, position FROM tasks WHERE station_id = ? ORDER BY position",
+            "SELECT id, station_id, prompt, position, points FROM tasks WHERE station_id = ? ORDER BY position",
             arrayOf(stationId.toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
@@ -681,7 +745,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     stationId = cursor.getLong(1),
                     prompt = cursor.getString(2),
                     position = cursor.getInt(3),
-                    options = getTaskOptions(database, taskId)
+                    options = getTaskOptions(database, taskId),
+                    points = cursor.getInt(4)
                 )
             }
         }
@@ -743,12 +808,13 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                         put("type", "MULTIPLE_CHOICE")
                         put("prompt", draft.prompt.trim())
                         put("position", draft.position)
+                        put("points", draft.points)
                     }
                 )
             } else {
                 database.execSQL(
-                    "UPDATE tasks SET prompt = ?, position = ? WHERE id = ? AND station_id = ?",
-                    arrayOf(draft.prompt.trim(), draft.position, draft.id, stationId)
+                    "UPDATE tasks SET prompt = ?, position = ?, points = ? WHERE id = ? AND station_id = ?",
+                    arrayOf(draft.prompt.trim(), draft.position, draft.points, draft.id, stationId)
                 )
             }
             database.delete("task_options", "task_id = ?", arrayOf(draft.id))
@@ -762,6 +828,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
     private fun List<MultipleChoiceTask>.matchesDrafts(drafts: List<MultipleChoiceTaskDraft>): Boolean =
         size == drafts.size && zip(drafts).all { (task, draft) ->
             task.id == draft.id && task.prompt == draft.prompt.trim() && task.position == draft.position &&
+                task.points == draft.points &&
                 task.options.size == draft.options.size && task.options.zip(draft.options).all { (option, item) ->
                     option.id == item.id && option.text == item.text.trim() &&
                         option.position == item.position && option.isCorrect == item.isCorrect
@@ -783,6 +850,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     put("type", "MULTIPLE_CHOICE")
                     put("prompt", task.prompt.trim())
                     put("position", task.position)
+                    put("points", task.points)
                 }
             )
             task.options.forEach { insertTaskOption(database, task.id, it) }
@@ -860,6 +928,18 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         createdAt = getLong(3),
         updatedAt = getLong(4),
         completedAt = if (isNull(5)) null else getLong(5)
+    )
+
+    private fun android.database.Cursor.toCompletedSessionResult() = CompletedSessionResult(
+        sessionId = getLong(0),
+        gameId = getLong(1),
+        gameTitle = getString(2),
+        completedAt = if (isNull(3)) 0L else getLong(3),
+        score = getLong(4),
+        completedTaskCount = getInt(5),
+        totalTaskCount = if (isNull(6)) null else getInt(6),
+        completedStationCount = getInt(7),
+        totalStationCount = if (isNull(8)) null else getInt(8)
     )
 
     private fun android.database.Cursor.toStationMedia() = StationMedia(

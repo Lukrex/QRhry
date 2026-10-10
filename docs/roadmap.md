@@ -14,6 +14,10 @@
 - [x] Persisted pending answer selection, incorrect retry history, task completion,
       station completion, and final-session completion.
 - [x] Multiple-choice authoring and gameplay for the first task type.
+- [x] Configurable nonnegative points per multiple-choice task, one-time
+      transactional awards, and persisted scores per session.
+- [x] Completed-run results and history with task/station counts, English and
+      Slovak UI, and backward-compatible v5→v6 migration.
 
 ## Current scope
 
@@ -22,7 +26,7 @@ remains data-driven; progression remains linear by station `position`.
 
 ## Later, not implemented
 
-Text answers, numeric answers, secret codes, optional tasks, scoring, hints,
-timers, achievements, branching, networking, synchronization, and shared content
+Text answers, numeric answers, secret codes, optional tasks, hints, timers,
+achievements, branching, networking, synchronization, and shared content
 versioning. Add each only with an explicit model, migration, and test plan; do
 not hardcode a demonstration game into game logic.

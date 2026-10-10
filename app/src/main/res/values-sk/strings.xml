@@ -49,6 +49,25 @@
     <string name="next_station">Nasledujúce stanovište</string>
     <string name="scan_station">Naskenovať stanovište</string>
     <string name="progress_count">Dokončené stanovištia: %1$d z %2$d</string>
+    <plurals name="current_score">
+        <item quantity="one">Aktuálne skóre: %1$d bod</item>
+        <item quantity="few">Aktuálne skóre: %1$d body</item>
+        <item quantity="other">Aktuálne skóre: %1$d bodov</item>
+    </plurals>
+    <plurals name="result_score">
+        <item quantity="one">Skóre: %1$d bod</item>
+        <item quantity="few">Skóre: %1$d body</item>
+        <item quantity="other">Skóre: %1$d bodov</item>
+    </plurals>
+    <string name="result_tasks_completed">Dokončené úlohy: %1$d/%2$d</string>
+    <string name="result_tasks_total_unavailable">Dokončené úlohy: %1$d (celkový počet nie je dostupný)</string>
+    <string name="result_stations_completed">Dokončené stanovištia: %1$d/%2$d</string>
+    <string name="result_stations_total_unavailable">Dokončené stanovištia: %1$d (celkový počet nie je dostupný)</string>
+    <string name="completed_runs">Dokončené herné relácie</string>
+    <string name="completed_run_summary">Herná relácia: %1$s, skóre %2$d</string>
+    <string name="completed_run_legacy_summary">Herná relácia: %1$s, skóre sa nezaznamenávalo</string>
+    <string name="result_score_unavailable">Skóre sa v tejto relácii nezaznamenávalo.</string>
+    <string name="view_results">Výsledky</string>
     <string name="correct_answer">Správna odpoveď.</string>
     <string name="incorrect_try_again">Nesprávna odpoveď. Skúste to znova.</string>
     <string name="edit_station_content">Upraviť obsah stanovišťa</string>
@@ -85,12 +104,18 @@
     <string name="multiple_choice_task">Úloha s výberom odpovede</string>
     <string name="remove_task">Odstrániť úlohu</string>
     <string name="question">Otázka</string>
+    <string name="task_points">Počet bodov</string>
     <string name="option_number">Možnosť %1$d</string>
     <string name="move_up">Presunúť vyššie</string>
     <string name="move_down">Presunúť nižšie</string>
     <string name="remove_option">Odstrániť možnosť</string>
     <string name="add_option">Pridať možnosť</string>
     <string name="task_complete">Úloha je splnená.</string>
+    <plurals name="task_complete_points">
+        <item quantity="one">Správna odpoveď. Získali ste %1$d bod.</item>
+        <item quantity="few">Správna odpoveď. Získali ste %1$d body.</item>
+        <item quantity="other">Správna odpoveď. Získali ste %1$d bodov.</item>
+    </plurals>
     <string name="incorrect_choose_again">Nesprávna odpoveď. Vyberte inú možnosť.</string>
     <string name="submit_answer">Odoslať odpoveď</string>
     <string name="submitting">Odosiela sa…</string>
@@ -114,6 +139,7 @@
     <string name="error_option_text_required">Zadajte text každej možnosti odpovede.</string>
     <string name="error_one_correct_option">Označte presne jednu správnu odpoveď.</string>
     <string name="error_option_identity">Identifikátor možnosti odpovede nie je platný.</string>
+    <string name="error_task_points">Zadajte nezáporný celý počet bodov.</string>
     <string name="error_game_unavailable">Vybraná hra nie je dostupná.</string>
     <string name="error_game_no_stations">Vybraná hra nemá žiadne stanovištia.</string>
     <string name="error_station_unavailable">Stanovište už nie je dostupné.</string>

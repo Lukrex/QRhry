@@ -42,6 +42,7 @@ class GameDatabaseHelper(
         createSessionTables(db, includeVisitCompletion = true)
         createStationMediaTable(db)
         createTaskTables(db)
+        addV6ScoringColumns(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -63,6 +64,10 @@ class GameDatabaseHelper(
                 4 -> {
                     migrateV4ToV5(db)
                     version = 5
+                }
+                5 -> {
+                    migrateV5ToV6(db)
+                    version = 6
                 }
                 else -> throw SQLiteException(
                     "No migration is defined from database version $version to $newVersion."
@@ -96,6 +101,32 @@ class GameDatabaseHelper(
         db.execSQL("ALTER TABLE station_visits ADD COLUMN completed_at INTEGER")
         db.execSQL("UPDATE station_visits SET completed_at = visited_at")
         createTaskTables(db)
+    }
+
+    private fun migrateV5ToV6(db: SQLiteDatabase) {
+        addV6ScoringColumns(db)
+    }
+
+    private fun addV6ScoringColumns(db: SQLiteDatabase) {
+        db.execSQL(
+            "ALTER TABLE game_sessions ADD COLUMN total_task_count INTEGER CHECK (total_task_count IS NULL OR total_task_count >= 0)"
+        )
+        db.execSQL(
+            "ALTER TABLE game_sessions ADD COLUMN total_station_count INTEGER CHECK (total_station_count IS NULL OR total_station_count >= 0)"
+        )
+        db.execSQL("ALTER TABLE tasks ADD COLUMN points INTEGER NOT NULL DEFAULT 100 CHECK (points >= 0)")
+        db.execSQL("ALTER TABLE task_attempts ADD COLUMN awarded_points INTEGER NOT NULL DEFAULT 0 CHECK (awarded_points >= 0)")
+        db.execSQL(
+            """UPDATE game_sessions SET
+                total_task_count = (
+                    SELECT COUNT(*) FROM tasks INNER JOIN stations ON stations.id = tasks.station_id
+                    WHERE stations.game_id = game_sessions.game_id
+                ),
+                total_station_count = (
+                    SELECT COUNT(*) FROM stations WHERE stations.game_id = game_sessions.game_id
+                )
+                WHERE status = 'IN_PROGRESS'"""
+        )
     }
 
     private fun createStationMediaTable(db: SQLiteDatabase) {
@@ -244,6 +275,6 @@ class GameDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "qrhry.db"
-        const val DATABASE_VERSION = 5
+        const val DATABASE_VERSION = 6
     }
 }

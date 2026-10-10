@@ -11,6 +11,7 @@ import com.qrhry.app.data.local.GameDatabaseHelper
 import com.qrhry.app.data.local.GameAssetStore
 import com.qrhry.app.data.local.ImportedAsset
 import com.qrhry.app.domain.Game
+import com.qrhry.app.domain.CompletedSessionResult
 import com.qrhry.app.domain.GameDraft
 import com.qrhry.app.domain.GameDraftValidator
 import com.qrhry.app.domain.GameSession
@@ -37,6 +38,7 @@ import kotlinx.coroutines.withContext
 data class GameScreenState(
     val games: List<Game> = emptyList(),
     val activeSessions: Map<Long, GameSession> = emptyMap(),
+    val completedSessions: List<CompletedSessionResult> = emptyList(),
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val isLoadingSession: Boolean = false,
@@ -53,8 +55,7 @@ data class GameScreenState(
     val scannerReturnRoute: GameScreenRoute = GameScreenRoute.CREATE,
     val editingStation: com.qrhry.app.domain.Station? = null,
     val isSavingStation: Boolean = false,
-    val isSavingTaskAnswer: Boolean = false,
-    val taskSubmissionCorrect: Boolean? = null
+    val isSavingTaskAnswer: Boolean = false
 )
 
 enum class GameScreenRoute {
@@ -243,7 +244,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 mutableState.value = mutableState.value.copy(
                     sessionProgress = hydrateProgress(progress),
-                    taskSubmissionCorrect = null,
                     error = null
                 )
             } catch (exception: Exception) {
@@ -265,7 +265,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 }) {
                     is TaskSubmissionResult.Submitted -> mutableState.value = mutableState.value.copy(
                         sessionProgress = hydrateProgress(result.progress),
-                        taskSubmissionCorrect = result.isCorrect,
                         isSavingTaskAnswer = false
                     )
                     TaskSubmissionResult.NoPendingSelection -> throw UserMessageException(UserMessageKey.SELECT_ANSWER_FIRST)
@@ -367,13 +366,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(isLoading = true, error = null)
             try {
-                val (games, activeSessions) = withContext(Dispatchers.IO) {
-                    repository.getAllGames().map(::hydrateGame) to
-                        repository.getActiveSessions().associateBy { it.gameId }
+                val (games, activeSessions, completedSessions) = withContext(Dispatchers.IO) {
+                    Triple(
+                        repository.getAllGames().map(::hydrateGame),
+                        repository.getActiveSessions().associateBy { it.gameId },
+                        repository.getCompletedSessionResults()
+                    )
                 }
                 mutableState.value = mutableState.value.copy(
                     games = games,
                     activeSessions = activeSessions,
+                    completedSessions = completedSessions,
                     isLoading = false
                 )
             } catch (exception: Exception) {
@@ -439,6 +442,32 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun openCompletedSession(sessionId: Long) {
+        if (mutableState.value.isLoadingSession) return
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(isLoadingSession = true, error = null)
+            try {
+                val progress = withContext(Dispatchers.IO) {
+                    repository.getSessionProgress(sessionId)
+                        ?.takeIf { it.session.status == GameSessionStatus.COMPLETED }
+                        ?.let(::hydrateProgress)
+                        ?: throw UserMessageException(UserMessageKey.SESSION_UNAVAILABLE)
+                }
+                mutableState.value = mutableState.value.copy(
+                    route = GameScreenRoute.PLAY_SESSION,
+                    sessionProgress = progress,
+                    stationScanResult = null,
+                    isLoadingSession = false
+                )
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(
+                    isLoadingSession = false,
+                    error = exception.messageKeyOr(UserMessageKey.SESSION_START_FAILED)
+                )
+            }
+        }
+    }
+
     fun openSessionScanner() {
         val session = mutableState.value.sessionProgress?.session ?: return
         if (session.status != GameSessionStatus.IN_PROGRESS) return
@@ -483,7 +512,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             },
                             sessionProgress = progress,
                             stationScanResult = result,
-                            taskSubmissionCorrect = null,
                             isLookingUpStation = false
                         )
                         refreshGames()
@@ -535,6 +563,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun navigateBack() {
+        val returningFromPlaySession = mutableState.value.route == GameScreenRoute.PLAY_SESSION
         mutableState.value = when (mutableState.value.route) {
             GameScreenRoute.HOME -> mutableState.value
             GameScreenRoute.SETTINGS -> mutableState.value.copy(route = mutableState.value.settingsReturnRoute)
@@ -551,5 +580,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             )
             GameScreenRoute.STATION -> mutableState.value.copy(route = GameScreenRoute.SCANNER)
         }
+        if (returningFromPlaySession) refreshGames()
     }
 }

@@ -18,6 +18,7 @@ object GameDraftValidator {
             if (!isCanonicalUuid(task.id)) return UserMessageKey.TASK_ID_INVALID
             if (task.prompt.isBlank()) return UserMessageKey.QUESTION_REQUIRED
             if (task.options.size < 2) return UserMessageKey.MINIMUM_OPTIONS_REQUIRED
+            if (task.points < 0) return UserMessageKey.TASK_POINTS_INVALID
             if (task.options.map { it.position } != task.options.indices.toList()) {
                 return UserMessageKey.OPTION_ORDER_INVALID
             }

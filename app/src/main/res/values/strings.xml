@@ -48,6 +48,23 @@
     <string name="next_station">Next station</string>
     <string name="scan_station">Scan station</string>
     <string name="progress_count">%1$d of %2$d stations completed</string>
+    <plurals name="current_score">
+        <item quantity="one">Current score: %1$d point</item>
+        <item quantity="other">Current score: %1$d points</item>
+    </plurals>
+    <plurals name="result_score">
+        <item quantity="one">Score: %1$d point</item>
+        <item quantity="other">Score: %1$d points</item>
+    </plurals>
+    <string name="result_tasks_completed">Tasks completed: %1$d/%2$d</string>
+    <string name="result_tasks_total_unavailable">Tasks completed: %1$d (total unavailable)</string>
+    <string name="result_stations_completed">Stations completed: %1$d/%2$d</string>
+    <string name="result_stations_total_unavailable">Stations completed: %1$d (total unavailable)</string>
+    <string name="completed_runs">Completed runs</string>
+    <string name="completed_run_summary">Run: %1$s, score %2$d</string>
+    <string name="completed_run_legacy_summary">Run: %1$s, score not recorded</string>
+    <string name="result_score_unavailable">Score was not recorded for this run.</string>
+    <string name="view_results">Results</string>
     <string name="correct_answer">Correct answer.</string>
     <string name="incorrect_try_again">Incorrect answer. You can try again.</string>
     <string name="edit_station_content">Edit station content</string>
@@ -84,12 +101,17 @@
     <string name="multiple_choice_task">Multiple-choice task</string>
     <string name="remove_task">Remove task</string>
     <string name="question">Question</string>
+    <string name="task_points">Points</string>
     <string name="option_number">Option %1$d</string>
     <string name="move_up">Move up</string>
     <string name="move_down">Move down</string>
     <string name="remove_option">Remove option</string>
     <string name="add_option">Add option</string>
     <string name="task_complete">Task complete.</string>
+    <plurals name="task_complete_points">
+        <item quantity="one">Correct answer. %1$d point awarded.</item>
+        <item quantity="other">Correct answer. %1$d points awarded.</item>
+    </plurals>
     <string name="incorrect_choose_again">Incorrect answer. Choose again.</string>
     <string name="submit_answer">Submit answer</string>
     <string name="submitting">Submitting…</string>
@@ -113,6 +135,7 @@
     <string name="error_option_text_required">Enter text for every answer option.</string>
     <string name="error_one_correct_option">Select exactly one correct answer.</string>
     <string name="error_option_identity">Answer option identity is invalid.</string>
+    <string name="error_task_points">Enter a non-negative whole number of points.</string>
     <string name="error_game_unavailable">The selected game is unavailable.</string>
     <string name="error_game_no_stations">The selected game has no stations.</string>
     <string name="error_station_unavailable">The station is no longer available.</string>
