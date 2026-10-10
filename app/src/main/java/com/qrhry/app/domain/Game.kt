@@ -6,8 +6,14 @@ data class Game(
     val stations: List<Station>,
     val gameUuid: String = "",
     val contentVersion: Int = 1,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val scoringMode: TaskScoringMode = TaskScoringMode.EVENTUAL_CORRECT
 )
+
+enum class TaskScoringMode {
+    EVENTUAL_CORRECT,
+    FIRST_TRY_ONLY
+}
 
 data class Station(
     val id: Long,
@@ -86,7 +92,8 @@ data class TaskAttempt(
     val correctness: Boolean?,
     val selectedAt: Long,
     val submittedAt: Long?,
-    val awardedPoints: Int = 0
+    val awardedPoints: Int = 0,
+    val isFinalized: Boolean = false
 ) {
     val isPending: Boolean
         get() = submittedAt == null
@@ -103,6 +110,12 @@ data class TaskProgress(
 
     val awardedPoints: Int
         get() = attempts.firstOrNull { it.correctness == true && it.submittedAt != null }?.awardedPoints ?: 0
+
+    val isSkipped: Boolean
+        get() = isCompleted && attempts.none { it.correctness == true && it.submittedAt != null }
+
+    val hasIncorrectSubmission: Boolean
+        get() = attempts.any { it.correctness == false && it.submittedAt != null }
 }
 
 enum class StationMediaType {
@@ -126,7 +139,8 @@ data class StationMedia(
 
 data class GameDraft(
     val title: String,
-    val stations: List<StationDraft>
+    val stations: List<StationDraft>,
+    val scoringMode: TaskScoringMode = TaskScoringMode.EVENTUAL_CORRECT
 )
 
 data class StationDraft(
@@ -151,7 +165,8 @@ data class GameSession(
     val status: GameSessionStatus,
     val createdAt: Long,
     val updatedAt: Long,
-    val completedAt: Long?
+    val completedAt: Long?,
+    val scoringMode: TaskScoringMode = TaskScoringMode.EVENTUAL_CORRECT
 )
 
 data class CompletedSessionResult(

@@ -6,6 +6,7 @@
     <string name="play">Hrať</string>
     <string name="settings">Nastavenia</string>
     <string name="language">Jazyk</string>
+    <string name="dark_mode">Tmavý režim</string>
     <string name="language_slovenian">Slovenčina</string>
     <string name="language_english">English</string>
     <string name="home">Domov</string>
@@ -140,6 +141,12 @@
     <string name="error_one_correct_option">Označte presne jednu správnu odpoveď.</string>
     <string name="error_option_identity">Identifikátor možnosti odpovede nie je platný.</string>
     <string name="error_task_points">Zadajte nezáporný celý počet bodov.</string>
+    <string name="game_scoring_mode">Ako sa udeľujú body za úlohy</string>
+    <string name="scoring_eventual_correct">Za správnu odpoveď, aj po opakovaní</string>
+    <string name="scoring_first_try_only">Iba za správnu odpoveď na prvý pokus</string>
+    <string name="continue_without_correct">Pokračovať bez správnej odpovede</string>
+    <string name="task_skipped">Pokračovali ste bez správnej odpovede. Body ste nezískali.</string>
+    <string name="error_task_continue_unavailable">Pred pokračovaním bez správnej odpovede odošlite nesprávnu odpoveď.</string>
     <string name="error_game_unavailable">Vybraná hra nie je dostupná.</string>
     <string name="error_game_no_stations">Vybraná hra nemá žiadne stanovištia.</string>
     <string name="error_station_unavailable">Stanovište už nie je dostupné.</string>

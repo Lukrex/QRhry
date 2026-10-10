@@ -24,6 +24,7 @@ import com.qrhry.app.domain.StationScanResult
 import com.qrhry.app.domain.StationMedia
 import com.qrhry.app.domain.StationMediaType
 import com.qrhry.app.domain.TaskSubmissionResult
+import com.qrhry.app.domain.TaskScoringMode
 import com.qrhry.app.domain.UserMessageException
 import com.qrhry.app.domain.UserMessageKey
 import com.qrhry.app.domain.messageKeyOr
@@ -55,7 +56,8 @@ data class GameScreenState(
     val scannerReturnRoute: GameScreenRoute = GameScreenRoute.CREATE,
     val editingStation: com.qrhry.app.domain.Station? = null,
     val isSavingStation: Boolean = false,
-    val isSavingTaskAnswer: Boolean = false
+    val isSavingTaskAnswer: Boolean = false,
+    val taskSkippedFeedback: Boolean = false
 )
 
 enum class GameScreenRoute {
@@ -89,9 +91,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun createGame(
         title: String,
         stations: List<StationDraft>,
-        mediaByStation: List<Pair<Uri?, Uri?>> = emptyList()
+        mediaByStation: List<Pair<Uri?, Uri?>> = emptyList(),
+        scoringMode: TaskScoringMode = TaskScoringMode.EVENTUAL_CORRECT
     ) {
-        val draft = GameDraft(title, stations)
+        val draft = GameDraft(title, stations, scoringMode)
         GameDraftValidator.validationError(draft)?.let { messageKey ->
             mutableState.value = mutableState.value.copy(error = messageKey)
             return
@@ -141,6 +144,22 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 mutableState.value = mutableState.value.copy(
                     isSaving = false,
                     error = exception.messageKeyOr(UserMessageKey.GAME_SAVE_FAILED)
+                )
+            }
+        }
+    }
+
+    fun updateGameScoringMode(gameId: Long, scoringMode: TaskScoringMode) {
+        viewModelScope.launch {
+            try {
+                val games = withContext(Dispatchers.IO) {
+                    repository.updateGameScoringMode(gameId, scoringMode)
+                    repository.getAllGames().map(::hydrateGame)
+                }
+                mutableState.value = mutableState.value.copy(games = games, error = null)
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(
+                    error = exception.messageKeyOr(UserMessageKey.GENERIC_ERROR)
                 )
             }
         }
@@ -244,6 +263,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 mutableState.value = mutableState.value.copy(
                     sessionProgress = hydrateProgress(progress),
+                    taskSkippedFeedback = false,
                     error = null
                 )
             } catch (exception: Exception) {
@@ -265,6 +285,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 }) {
                     is TaskSubmissionResult.Submitted -> mutableState.value = mutableState.value.copy(
                         sessionProgress = hydrateProgress(result.progress),
+                        taskSkippedFeedback = false,
                         isSavingTaskAnswer = false
                     )
                     TaskSubmissionResult.NoPendingSelection -> throw UserMessageException(UserMessageKey.SELECT_ANSWER_FIRST)
@@ -276,6 +297,29 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 mutableState.value = mutableState.value.copy(
                     isSavingTaskAnswer = false,
                     error = exception.messageKeyOr(UserMessageKey.ANSWER_SUBMIT_FAILED)
+                )
+            }
+        }
+    }
+
+    fun continueTaskAfterWrongAnswer(taskId: String) {
+        val sessionId = mutableState.value.sessionProgress?.session?.id ?: return
+        if (mutableState.value.isSavingTaskAnswer) return
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(isSavingTaskAnswer = true, error = null)
+            try {
+                val progress = withContext(Dispatchers.IO) {
+                    repository.continueTaskAfterWrongAnswer(sessionId, taskId)
+                }
+                mutableState.value = mutableState.value.copy(
+                    sessionProgress = hydrateProgress(progress),
+                    taskSkippedFeedback = true,
+                    isSavingTaskAnswer = false
+                )
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(
+                    isSavingTaskAnswer = false,
+                    error = exception.messageKeyOr(UserMessageKey.TASK_CONTINUE_UNAVAILABLE)
                 )
             }
         }
@@ -430,6 +474,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     route = GameScreenRoute.PLAY_SESSION,
                     sessionProgress = progress,
                     stationScanResult = null,
+                    taskSkippedFeedback = false,
                     activeSessions = sessions,
                     isLoadingSession = false
                 )
@@ -457,6 +502,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     route = GameScreenRoute.PLAY_SESSION,
                     sessionProgress = progress,
                     stationScanResult = null,
+                    taskSkippedFeedback = false,
                     isLoadingSession = false
                 )
             } catch (exception: Exception) {
@@ -512,6 +558,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             },
                             sessionProgress = progress,
                             stationScanResult = result,
+                            taskSkippedFeedback = false,
                             isLookingUpStation = false
                         )
                         refreshGames()

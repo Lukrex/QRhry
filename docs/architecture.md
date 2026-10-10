@@ -9,7 +9,7 @@ flow is:
 
 - `domain` contains game, station, multiple-choice task, option, visit, attempt,
   drafts, and validation models without Android or database dependencies.
-- `data.local.GameDatabaseHelper` owns schema version 6, foreign keys, indexes,
+- `data.local.GameDatabaseHelper` owns schema version 7, foreign keys, indexes,
   and sequential, non-destructive migrations.
 - `data.GameRepository` owns parameterized reads and transactional writes for
   game/station/task content, session progression, and scoring. It validates QR
@@ -34,32 +34,39 @@ station, while the model and tables support multiple ordered tasks.
 Keep these states distinct:
 
 - **Visited**: `station_visits` row exists after a valid expected QR scan.
-- **Task completed**: a submitted correct `task_attempts` row exists for the
-  session and task. Pending selections and incorrect submissions do not count.
+- **Task completed**: a submitted correct attempt or an explicitly finalized
+  incorrect attempt exists for the session and task. Pending selections and
+  ordinary incorrect submissions remain retryable and do not count.
 - **Points awarded**: a successful attempt stores the task's configured point
   value in `task_attempts.awarded_points` in the answer-submission transaction.
-  Incorrect attempts store zero; a completed task cannot award points again.
-  Session score is derived from persisted awards, not current task definitions.
+  Each game selects `EVENTUAL_CORRECT` (default) or `FIRST_TRY_ONLY`; the chosen
+  mode is snapshotted on each session. Incorrect attempts store zero. Explicitly
+  continuing after a wrong answer finalizes that wrong attempt for progression,
+  not correctness or points. Session score is derived from persisted awards,
+  not current task definitions.
 - **Station completed**: `station_visits.completed_at` is non-null. A taskless
   station completes on scan; otherwise all its tasks need a correct attempt.
 
 The repository resumes an incomplete visited station and accepts no later
-station until it is complete. Linear `stations.position` determines order; no
-`next_station_id` or branching rule is stored. Session progress and pending
-answer selection are reconstructed from SQLite after restart. Incorrect answers
-are retained and may be retried indefinitely. New sessions snapshot task and
-station totals at start. Completed runs can be reopened from Play without
-starting another session. V5 attempts migrate with zero awarded points, and
-completed legacy sessions display their score and historical totals as
-unavailable because scoring was not recorded for those runs.
+station until it is complete. A station completes when every task is solved or
+explicitly finalized after a wrong answer. Linear `stations.position`
+determines order; no `next_station_id` or branching rule is stored. Session
+progress and pending answer selection are reconstructed from SQLite after
+restart. Incorrect answers remain retryable until the player continues. New
+sessions snapshot scoring mode and task/station totals at start. Completed runs
+can be reopened from Play without starting another session. V5 attempts migrate
+with zero awarded points, and completed legacy sessions display their score and
+historical totals as unavailable because scoring was not recorded for those
+runs.
 
 ## Content editing and future scope
 
 Station/task/option saves are transactional. Task configuration cannot change
-while its game has an active session. Attempt rows snapshot the prompt, selected
-answer text, correctness, awarded points, and timestamps; selected option IDs
-are not foreign keys, so option changes do not erase historical answers. A task
-with attempts is not deleted. No timers, hints, achievements, networking,
-additional task types, or branching are implemented. Future task types should
-use typed relational data rather than nullable columns on `stations` or opaque
-JSON.
+while its game has an active session. A game's scoring mode may be edited, but
+active and completed runs keep their session snapshot. Attempt rows snapshot the
+prompt, selected answer text, correctness, awarded points, finalization state,
+and timestamps; selected option IDs are not foreign keys, so option changes do
+not erase historical answers. A task with attempts is not deleted. No timers,
+hints, achievements, networking, additional task types, or branching are
+implemented. Future task types should use typed relational data rather than
+nullable columns on `stations` or opaque JSON.

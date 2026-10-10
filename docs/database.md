@@ -1,14 +1,15 @@
 # Database
 
 The app uses raw SQLite through `SQLiteOpenHelper`; database operations are
-isolated in the data layer. The current schema version is 6.
+isolated in the data layer. The current schema version is 7.
 
 ## Core tables
 
 ### `games`
 
 `id INTEGER PRIMARY KEY AUTOINCREMENT`, nonblank `title`, unique stable
-`game_uuid`, `content_version`, and `updated_at`.
+`game_uuid`, `content_version`, `updated_at`, and `scoring_mode` constrained to
+`EVENTUAL_CORRECT` or `FIRST_TRY_ONLY` (default `EVENTUAL_CORRECT`).
 
 ### `stations`
 
@@ -30,7 +31,9 @@ URIs.
 
 `id`, `game_id`, `status` (`IN_PROGRESS`/`COMPLETED`), `created_at`, `updated_at`,
 nullable `completed_at`, and nullable `total_task_count` / `total_station_count`
-snapshots. New sessions capture both totals at start. V5 active sessions are
+snapshots, plus a `scoring_mode` snapshot. New sessions capture totals and the
+game's current scoring mode at start; later policy edits affect future runs
+only. V5 active sessions are
 backfilled during migration; completed legacy sessions keep null totals because
 later task edits make their historical denominators unrecoverable. Their score
 is displayed as not recorded; the migration does not infer rewards from old
@@ -68,18 +71,23 @@ exactly one correct option.
 UUID `id`, `session_id` foreign key to `game_sessions` with cascade, `task_id`
 foreign key to `tasks` with restrict, `selected_option_id` (intentionally not a
 foreign key), selected-option and prompt text snapshots, nullable `correctness`,
-`selected_at`, nullable `submitted_at`, and nonnegative `awarded_points` (default
-0). A null `submitted_at` denotes the persisted pending selection. A check
+`selected_at`, nullable `submitted_at`, nonnegative `awarded_points` (default
+0), and `is_finalized` constrained to 0/1 (default 0). A null `submitted_at`
+denotes the persisted pending selection. A check
 constraint requires pending rows to have null correctness and submitted rows to
 have a correctness value. A partial unique index allows at most one pending row
 per `(session_id, task_id)`; submitted wrong and correct attempts are retained.
 Correctness and awarded points are committed atomically. Wrong answers award
-zero; a successful task stores its configured points once. Score is summed from
-immutable awards rather than recalculated from mutable task definitions.
+zero; a successful task stores its configured points once, subject to the
+session's scoring mode. `is_finalized = 1` marks the last incorrect submission
+when the player explicitly continues without solving the task. This resolves
+the task for progression but never makes it correct or awards points. Score is
+summed from immutable awards rather than recalculated from mutable definitions.
 
-Task completion is derived from a submitted correct attempt. Station completion
-is stored on `station_visits.completed_at` and occurs on scan for taskless
-stations, or after all station tasks have correct attempts. The first
+Task completion is derived from either a submitted correct attempt or a
+finalized incorrect attempt. Station completion is stored on
+`station_visits.completed_at` and occurs on scan for taskless stations, or after
+all station tasks are correct or explicitly finalized. The first
 non-completed station by `position` is the progression cursor.
 
 ## Transactions and migrations
@@ -103,7 +111,12 @@ a path is undefined; it never silently drops user data.
   nullable session task/station totals. It backfills totals only for active
   sessions and does not rewrite or delete existing rows. Existing attempts
   receive zero points so pre-scoring answers are never retroactively rewarded.
+- **v6→v7** adds game scoring modes, snapshots each mode to existing sessions
+  as `EVENTUAL_CORRECT`, and adds `task_attempts.is_finalized` (default zero).
+  Existing points and awards are preserved; prior incorrect answers remain
+  retryable and prior correct answers remain completed.
 
-Fresh databases are created directly with the complete v6 schema. The v2→v3
+Fresh databases are created directly with the complete v7 schema. The v2→v3
 migration deliberately creates the historical v3 visit shape so the following
-v4→v5 step can add `completed_at` exactly once before v5→v6 adds scoring.
+v4→v5 step can add `completed_at` exactly once before v5→v6 adds task points
+and v6→v7 adds scoring policies and explicit task finalization.

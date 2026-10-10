@@ -36,6 +36,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
@@ -51,6 +52,8 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import androidx.appcompat.app.AppCompatDelegate
@@ -69,6 +72,7 @@ import com.qrhry.app.domain.MultipleChoiceTask
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
 import com.qrhry.app.domain.TaskOptionDraft
 import com.qrhry.app.domain.TaskProgress
+import com.qrhry.app.domain.TaskScoringMode
 import com.qrhry.app.domain.UserMessageKey
 import com.qrhry.app.R
 import com.qrhry.app.qr.StationQrCodeGenerator
@@ -225,7 +229,12 @@ private val stationEditorDraftSaver = listSaver<StationEditorDraftState, String>
 )
 
 @Composable
-fun GameScreen(viewModel: GameViewModel, onLaunchQrScanner: () -> Unit) {
+fun GameScreen(
+    viewModel: GameViewModel,
+    isDarkMode: Boolean,
+    onDarkModeChange: (Boolean) -> Unit,
+    onLaunchQrScanner: () -> Unit
+) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val saveableStateHolder = rememberSaveableStateHolder()
@@ -266,6 +275,8 @@ fun GameScreen(viewModel: GameViewModel, onLaunchQrScanner: () -> Unit) {
             onSelectLanguage = { language ->
                 AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(language))
             },
+            isDarkMode = isDarkMode,
+            onDarkModeChange = onDarkModeChange,
             onBack = viewModel::navigateBack
         )
         GameScreenRoute.CREATE -> GameLibraryScreen(state, viewModel, pickMedia)
@@ -287,8 +298,10 @@ fun GameScreen(viewModel: GameViewModel, onLaunchQrScanner: () -> Unit) {
                 scanResult = state.stationScanResult,
                 isLoading = state.isLoadingSession,
                 isSubmittingAnswer = state.isSavingTaskAnswer,
+                taskSkippedFeedback = state.taskSkippedFeedback,
                 onSelectOption = viewModel::selectTaskOption,
                 onSubmitTask = viewModel::submitTaskAnswer,
+                onContinueTask = viewModel::continueTaskAfterWrongAnswer,
                 onScan = viewModel::openSessionScanner,
                 onBack = viewModel::navigateBack
             )
@@ -333,12 +346,15 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
 private fun SettingsScreen(
     selectedLanguage: String,
     onSelectLanguage: (String) -> Unit,
+    isDarkMode: Boolean,
+    onDarkModeChange: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        val darkModeLabel = stringResource(R.string.dark_mode)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
@@ -369,6 +385,18 @@ private fun SettingsScreen(
             RadioButton(selected = selectedLanguage == "en", onClick = null)
             Text(stringResource(R.string.language_english))
         }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Text(darkModeLabel)
+            Switch(
+                modifier = Modifier.semantics { contentDescription = darkModeLabel },
+                checked = isDarkMode,
+                onCheckedChange = onDarkModeChange
+            )
+        }
     }
 }
 
@@ -396,6 +424,7 @@ private fun userMessageText(key: UserMessageKey): String = stringResource(
         UserMessageKey.TASK_UNAVAILABLE -> R.string.error_task_unavailable
         UserMessageKey.TASK_NOT_CURRENT -> R.string.error_task_not_current
         UserMessageKey.TASK_ALREADY_COMPLETED -> R.string.error_task_completed
+        UserMessageKey.TASK_CONTINUE_UNAVAILABLE -> R.string.error_task_continue_unavailable
         UserMessageKey.ANSWER_UNAVAILABLE -> R.string.error_answer_unavailable
         UserMessageKey.SELECT_ANSWER_FIRST -> R.string.error_select_answer
         UserMessageKey.TASK_EDIT_ACTIVE_SESSION -> R.string.error_task_edit_active
@@ -424,6 +453,7 @@ private fun GameLibraryScreen(
     onPickMedia: (StationMediaType, (Uri) -> Unit) -> Unit
 ) {
     var gameTitle by rememberSaveable { mutableStateOf("") }
+    var scoringModeName by rememberSaveable { mutableStateOf(TaskScoringMode.EVENTUAL_CORRECT.name) }
     var stationForms by rememberSaveable(stateSaver = stationFormsSaver) {
         mutableStateOf(listOf(StationFormState(), StationFormState()))
     }
@@ -431,6 +461,7 @@ private fun GameLibraryScreen(
     LaunchedEffect(state.savedGameId) {
         if (state.savedGameId != null) {
             gameTitle = ""
+            scoringModeName = TaskScoringMode.EVENTUAL_CORRECT.name
             stationForms = listOf(StationFormState(), StationFormState())
         }
     }
@@ -462,6 +493,10 @@ private fun GameLibraryScreen(
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text(stringResource(R.string.game_title)) },
                 singleLine = true
+            )
+            GameScoringModeSelector(
+                scoringMode = TaskScoringMode.valueOf(scoringModeName),
+                onScoringModeChange = { scoringModeName = it.name }
             )
 
             stationForms.forEachIndexed { index, form ->
@@ -544,7 +579,8 @@ private fun GameLibraryScreen(
                                 listOfNotNull(form.task?.toDraft(0))
                             )
                         },
-                        stationForms.map { it.imageUri to it.audioUri }
+                        stationForms.map { it.imageUri to it.audioUri },
+                        scoringMode = TaskScoringMode.valueOf(scoringModeName)
                     )
                 },
                 enabled = !state.isSaving,
@@ -561,7 +597,11 @@ private fun GameLibraryScreen(
                 Text(stringResource(R.string.no_games_yet))
             } else {
                 state.games.forEach { game ->
-                    SavedGame(game, onEditStation = viewModel::editStation)
+                    SavedGame(
+                        game,
+                        onEditStation = viewModel::editStation,
+                        onScoringModeChange = viewModel::updateGameScoringMode
+                    )
                 }
             }
         }
@@ -650,8 +690,10 @@ private fun PlaySessionScreen(
     scanResult: StationScanResult?,
     isLoading: Boolean,
     isSubmittingAnswer: Boolean,
+    taskSkippedFeedback: Boolean,
     onSelectOption: (String, String) -> Unit,
     onSubmitTask: (String) -> Unit,
+    onContinueTask: (String) -> Unit,
     onScan: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -735,7 +777,8 @@ private fun PlaySessionScreen(
                     progress = taskProgress,
                     isSubmitting = isSubmittingAnswer,
                     onSelectOption = { optionId -> onSelectOption(taskProgress.task.id, optionId) },
-                    onSubmit = { onSubmitTask(taskProgress.task.id) }
+                    onSubmit = { onSubmitTask(taskProgress.task.id) },
+                    onContinue = { onContinueTask(taskProgress.task.id) }
                 )
             }
         } else if (progress.stationVisits.isEmpty()) {
@@ -752,6 +795,9 @@ private fun PlaySessionScreen(
                 }
             }
         }
+        if (taskSkippedFeedback && progress.currentStation == null) {
+            Text(stringResource(R.string.task_skipped))
+        }
         scanResult?.let { result ->
             Text(
                 stationScanMessage(result),
@@ -766,13 +812,21 @@ private fun PlaySessionScreen(
 }
 
 @Composable
-private fun SavedGame(game: Game, onEditStation: (com.qrhry.app.domain.Station) -> Unit) {
+private fun SavedGame(
+    game: Game,
+    onEditStation: (com.qrhry.app.domain.Station) -> Unit,
+    onScoringModeChange: (Long, TaskScoringMode) -> Unit
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(game.title, style = MaterialTheme.typography.titleMedium)
+            GameScoringModeSelector(
+                scoringMode = game.scoringMode,
+                onScoringModeChange = { onScoringModeChange(game.id, it) }
+            )
             game.stations.forEachIndexed { index, station ->
                 Text(stringResource(R.string.station_index_title, index + 1, station.title), style = MaterialTheme.typography.bodyMedium)
                 if (station.bodyText.isNotBlank()) {
@@ -785,6 +839,32 @@ private fun SavedGame(game: Game, onEditStation: (com.qrhry.app.domain.Station) 
                 OutlinedButton(onClick = { onEditStation(station) }) {
                     Text(stringResource(R.string.edit_station_content))
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GameScoringModeSelector(
+    scoringMode: TaskScoringMode,
+    onScoringModeChange: (TaskScoringMode) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(stringResource(R.string.game_scoring_mode), style = MaterialTheme.typography.titleSmall)
+        listOf(
+            TaskScoringMode.EVENTUAL_CORRECT to R.string.scoring_eventual_correct,
+            TaskScoringMode.FIRST_TRY_ONLY to R.string.scoring_first_try_only
+        ).forEach { (mode, label) ->
+            Row(
+                modifier = Modifier.fillMaxWidth().selectable(
+                    selected = scoringMode == mode,
+                    onClick = { onScoringModeChange(mode) },
+                    role = Role.RadioButton
+                ),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                RadioButton(selected = scoringMode == mode, onClick = null)
+                Text(stringResource(label))
             }
         }
     }
@@ -1115,18 +1195,23 @@ private fun MultipleChoiceTaskPlayer(
     progress: TaskProgress,
     isSubmitting: Boolean,
     onSelectOption: (String) -> Unit,
-    onSubmit: () -> Unit
+    onSubmit: () -> Unit,
+    onContinue: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(progress.task.prompt, style = MaterialTheme.typography.titleLarge)
         if (progress.isCompleted) {
-            Text(
-                pluralStringResource(
-                    R.plurals.task_complete_points,
-                    progress.awardedPoints,
-                    progress.awardedPoints
+            if (progress.isSkipped) {
+                Text(stringResource(R.string.task_skipped))
+            } else {
+                Text(
+                    pluralStringResource(
+                        R.plurals.task_complete_points,
+                        progress.awardedPoints,
+                        progress.awardedPoints
+                    )
                 )
-            )
+            }
         } else {
             if (progress.pendingAttempt == null) {
                 progress.lastSubmittedAttempt?.takeIf { it.correctness == false }?.let {
@@ -1148,6 +1233,13 @@ private fun MultipleChoiceTaskPlayer(
                 enabled = progress.pendingAttempt != null && !isSubmitting,
                 modifier = Modifier.fillMaxWidth()
             ) { Text(stringResource(if (isSubmitting) R.string.submitting else R.string.submit_answer)) }
+            if (progress.hasIncorrectSubmission) {
+                OutlinedButton(
+                    onClick = onContinue,
+                    enabled = !isSubmitting,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(stringResource(R.string.continue_without_correct)) }
+            }
         }
     }
 }

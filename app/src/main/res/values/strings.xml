@@ -6,6 +6,7 @@
     <string name="play">Play</string>
     <string name="settings">Settings</string>
     <string name="language">Language</string>
+    <string name="dark_mode">Dark mode</string>
     <string name="language_slovenian">Slovenčina</string>
     <string name="language_english">English</string>
     <string name="home">Home</string>
@@ -136,6 +137,12 @@
     <string name="error_one_correct_option">Select exactly one correct answer.</string>
     <string name="error_option_identity">Answer option identity is invalid.</string>
     <string name="error_task_points">Enter a non-negative whole number of points.</string>
+    <string name="game_scoring_mode">How question points are awarded</string>
+    <string name="scoring_eventual_correct">Award points for a correct answer, including retries</string>
+    <string name="scoring_first_try_only">Award points only when the first answer is correct</string>
+    <string name="continue_without_correct">Continue without a correct answer</string>
+    <string name="task_skipped">You continued without a correct answer. No points were awarded.</string>
+    <string name="error_task_continue_unavailable">Submit an incorrect answer before continuing without a correct answer.</string>
     <string name="error_game_unavailable">The selected game is unavailable.</string>
     <string name="error_game_no_stations">The selected game has no stations.</string>
     <string name="error_station_unavailable">The station is no longer available.</string>

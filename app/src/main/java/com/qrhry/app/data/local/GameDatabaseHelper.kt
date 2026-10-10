@@ -43,6 +43,7 @@ class GameDatabaseHelper(
         createStationMediaTable(db)
         createTaskTables(db)
         addV6ScoringColumns(db)
+        addV7ScoringPolicyColumns(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -68,6 +69,10 @@ class GameDatabaseHelper(
                 5 -> {
                     migrateV5ToV6(db)
                     version = 6
+                }
+                6 -> {
+                    migrateV6ToV7(db)
+                    version = 7
                 }
                 else -> throw SQLiteException(
                     "No migration is defined from database version $version to $newVersion."
@@ -105,6 +110,20 @@ class GameDatabaseHelper(
 
     private fun migrateV5ToV6(db: SQLiteDatabase) {
         addV6ScoringColumns(db)
+    }
+
+    private fun migrateV6ToV7(db: SQLiteDatabase) {
+        addV7ScoringPolicyColumns(db)
+    }
+
+    private fun addV7ScoringPolicyColumns(db: SQLiteDatabase) {
+        db.execSQL(
+            "ALTER TABLE games ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'EVENTUAL_CORRECT' CHECK (scoring_mode IN ('EVENTUAL_CORRECT', 'FIRST_TRY_ONLY'))"
+        )
+        db.execSQL(
+            "ALTER TABLE game_sessions ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'EVENTUAL_CORRECT' CHECK (scoring_mode IN ('EVENTUAL_CORRECT', 'FIRST_TRY_ONLY'))"
+        )
+        db.execSQL("ALTER TABLE task_attempts ADD COLUMN is_finalized INTEGER NOT NULL DEFAULT 0 CHECK (is_finalized IN (0, 1))")
     }
 
     private fun addV6ScoringColumns(db: SQLiteDatabase) {
@@ -275,6 +294,6 @@ class GameDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "qrhry.db"
-        const val DATABASE_VERSION = 6
+        const val DATABASE_VERSION = 7
     }
 }
