@@ -107,6 +107,7 @@
     <string name="question">Otázka</string>
     <string name="task_points">Počet bodov</string>
     <string name="answer_options">Možnosti odpovede</string>
+    <string name="select_correct_answer">Označte jednu správnu odpoveď.</string>
     <string name="option_number">Možnosť %1$d</string>
     <string name="move_up">Presunúť vyššie</string>
     <string name="move_down">Presunúť nižšie</string>

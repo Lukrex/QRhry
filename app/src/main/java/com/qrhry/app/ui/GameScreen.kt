@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -31,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +62,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
@@ -650,15 +656,18 @@ private fun GameLibraryScreen(
                 }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 OutlinedButton(
-                    onClick = { stationForms = stationForms + StationFormState() }
+                    onClick = { stationForms = stationForms + StationFormState() },
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(stringResource(R.string.add_station))
                 }
                 if (stationForms.size > 2) {
-                    OutlinedButton(
-                        onClick = { stationForms = stationForms.dropLast(1) }
+                    TextButton(
+                        onClick = { stationForms = stationForms.dropLast(1) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) {
                         Text(stringResource(R.string.remove_last_station))
                     }
@@ -1019,7 +1028,11 @@ private fun GameScoringModeSelector(
                 ),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
-                RadioButton(selected = scoringMode == mode, onClick = null)
+                RadioButton(
+                    modifier = Modifier.padding(end = 8.dp),
+                    selected = scoringMode == mode,
+                    onClick = null
+                )
                 Text(stringResource(label))
             }
         }
@@ -1282,95 +1295,150 @@ private fun MultipleChoiceTaskEditor(
     onChange: (MultipleChoiceTaskFormState) -> Unit,
     onRemove: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+    val moveUpLabel = stringResource(R.string.move_up)
+    val moveDownLabel = stringResource(R.string.move_down)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(stringResource(R.string.multiple_choice_task), style = MaterialTheme.typography.titleMedium)
-            TextButton(
-                onClick = onRemove,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) { Text(stringResource(R.string.remove_task)) }
-        }
-        OutlinedTextField(
-            value = task.prompt,
-            onValueChange = { onChange(task.copy(prompt = it)) },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(stringResource(R.string.question)) }
-        )
-        OutlinedTextField(
-            value = task.pointsText,
-            onValueChange = { onChange(task.copy(pointsText = it)) },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(stringResource(R.string.task_points)) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            singleLine = true
-        )
-        Text(stringResource(R.string.answer_options), style = MaterialTheme.typography.titleSmall)
-        task.options.forEachIndexed { index, option ->
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surfaceVariant
-            ) {
-                Column(
-                    modifier = Modifier.padding(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        RadioButton(
-                            modifier = Modifier.padding(start = 8.dp, end = 4.dp),
-                            selected = option.isCorrect,
-                            onClick = {
-                                onChange(task.copy(options = task.options.mapIndexed { optionIndex, item ->
-                                    item.copy(isCorrect = optionIndex == index)
-                                }))
-                            }
-                        )
-                        OutlinedTextField(
-                            value = option.text,
-                            onValueChange = { value ->
-                                onChange(task.copy(options = task.options.updated(index) { it.copy(text = value) }))
-                            },
-                            modifier = Modifier.weight(1f),
-                            label = { Text(stringResource(R.string.option_number, index + 1)) },
-                            singleLine = true
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = {
-                                val options = task.options.toMutableList()
-                                val moved = options.removeAt(index)
-                                options.add(index - 1, moved)
-                                onChange(task.copy(options = options))
-                            },
-                            enabled = index > 0,
-                            modifier = Modifier.weight(1f)
-                        ) { Text(stringResource(R.string.move_up)) }
-                        OutlinedButton(
-                            onClick = {
-                                val options = task.options.toMutableList()
-                                val moved = options.removeAt(index)
-                                options.add(index + 1, moved)
-                                onChange(task.copy(options = options))
-                            },
-                            enabled = index < task.options.lastIndex,
-                            modifier = Modifier.weight(1f)
-                        ) { Text(stringResource(R.string.move_down)) }
-                    }
+            Column {
+                Text(stringResource(R.string.multiple_choice_task), style = MaterialTheme.typography.titleMedium)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(
-                        onClick = { onChange(task.copy(options = task.options.filterIndexed { i, _ -> i != index })) },
-                        modifier = Modifier.align(Alignment.End),
+                        onClick = onRemove,
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                    ) { Text(stringResource(R.string.remove_option)) }
+                    ) { Text(stringResource(R.string.remove_task)) }
                 }
             }
+            OutlinedTextField(
+                value = task.prompt,
+                onValueChange = { onChange(task.copy(prompt = it)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(stringResource(R.string.question)) },
+                minLines = 3
+            )
+            OutlinedTextField(
+                value = task.pointsText,
+                onValueChange = { onChange(task.copy(pointsText = it)) },
+                modifier = Modifier.align(Alignment.End).widthIn(min = 136.dp, max = 180.dp),
+                label = { Text(stringResource(R.string.task_points)) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.answer_options), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    stringResource(R.string.select_correct_answer),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                task.options.forEachIndexed { index, option ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                RadioButton(
+                                    modifier = Modifier.padding(end = 4.dp),
+                                    selected = option.isCorrect,
+                                    onClick = {
+                                        onChange(task.copy(options = task.options.mapIndexed { optionIndex, item ->
+                                            item.copy(isCorrect = optionIndex == index)
+                                        }))
+                                    }
+                                )
+                                OutlinedTextField(
+                                    value = option.text,
+                                    onValueChange = { value ->
+                                        onChange(task.copy(options = task.options.updated(index) { it.copy(text = value) }))
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text(stringResource(R.string.option_number, index + 1)) },
+                                    singleLine = true
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val options = task.options.toMutableList()
+                                        val moved = options.removeAt(index)
+                                        options.add(index - 1, moved)
+                                        onChange(task.copy(options = options))
+                                    },
+                                    enabled = index > 0,
+                                    modifier = Modifier.semantics {
+                                        contentDescription = moveUpLabel
+                                    }
+                                ) {
+                                    ReorderArrowIcon(pointsUp = true)
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val options = task.options.toMutableList()
+                                        val moved = options.removeAt(index)
+                                        options.add(index + 1, moved)
+                                        onChange(task.copy(options = options))
+                                    },
+                                    enabled = index < task.options.lastIndex,
+                                    modifier = Modifier.semantics {
+                                        contentDescription = moveDownLabel
+                                    }
+                                ) {
+                                    ReorderArrowIcon(pointsUp = false)
+                                }
+                                Spacer(Modifier.weight(1f))
+                                TextButton(
+                                    onClick = { onChange(task.copy(options = task.options.filterIndexed { i, _ -> i != index })) },
+                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) { Text(stringResource(R.string.remove_option)) }
+                            }
+                        }
+                    }
+                }
+                OutlinedButton(
+                    onClick = { onChange(task.copy(options = task.options + TaskOptionFormState())) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(stringResource(R.string.add_option)) }
+            }
         }
-        OutlinedButton(
-            onClick = { onChange(task.copy(options = task.options + TaskOptionFormState())) }
-        ) { Text(stringResource(R.string.add_option)) }
+    }
+}
+
+@Composable
+private fun ReorderArrowIcon(pointsUp: Boolean) {
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    Canvas(Modifier.size(24.dp)) {
+        val centerX = size.width / 2f
+        val path = Path().apply {
+            if (pointsUp) {
+                moveTo(centerX, size.height * 0.78f)
+                lineTo(centerX, size.height * 0.24f)
+                moveTo(size.width * 0.27f, size.height * 0.48f)
+                lineTo(centerX, size.height * 0.22f)
+                lineTo(size.width * 0.73f, size.height * 0.48f)
+            } else {
+                moveTo(centerX, size.height * 0.22f)
+                lineTo(centerX, size.height * 0.76f)
+                moveTo(size.width * 0.27f, size.height * 0.52f)
+                lineTo(centerX, size.height * 0.78f)
+                lineTo(size.width * 0.73f, size.height * 0.52f)
+            }
+        }
+        drawPath(path, color, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
     }
 }
 

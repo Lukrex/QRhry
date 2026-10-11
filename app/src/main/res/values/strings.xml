@@ -104,6 +104,7 @@
     <string name="question">Question</string>
     <string name="task_points">Points</string>
     <string name="answer_options">Answer options</string>
+    <string name="select_correct_answer">Mark one correct answer.</string>
     <string name="option_number">Option %1$d</string>
     <string name="move_up">Move up</string>
     <string name="move_down">Move down</string>

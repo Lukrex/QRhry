@@ -89,6 +89,8 @@ class AppLocalizationTest {
         composeRule.onNodeWithText("Hra vytvorená v angličtine").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Nádvorie").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Question authored in English").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Answer options").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Mark one correct answer.").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("275").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("First authored option").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Second authored option").performScrollTo().assertIsDisplayed()
@@ -104,6 +106,9 @@ class AppLocalizationTest {
         composeRule.onAllNodesWithText("Pridať úlohu s výberom odpovede")[0].performClick()
         composeRule.onNodeWithText("Otázka").performTextInput("Otázka po otočení")
         composeRule.onNodeWithText("Možnosť 1").performTextInput("Prvá odpoveď")
+        composeRule.onNodeWithText("Označte jednu správnu odpoveď.")
+            .performScrollTo()
+            .assertIsDisplayed()
         composeRule.onAllNodesWithText("Odstrániť možnosť")[0]
             .performScrollTo()
             .assertIsDisplayed()
