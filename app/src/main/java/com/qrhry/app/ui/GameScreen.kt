@@ -10,6 +10,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -67,10 +68,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.unit.dp
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import com.qrhry.app.domain.Game
 import com.qrhry.app.domain.GameSessionStatus
@@ -370,15 +373,19 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
         ) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Surface(
-                modifier = Modifier.size(48.dp),
-                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.size(72.dp),
+                shape = MaterialTheme.shapes.large,
                 color = MaterialTheme.colorScheme.primaryContainer
             ) {
-                QRhryIcon(
-                    QRhryIconKind.QR,
-                    modifier = Modifier.padding(11.dp),
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    Image(
+                        painter = painterResource(R.drawable.qrhry_logo_mark),
+                        contentDescription = null,
+                        modifier = Modifier.size(width = 56.dp, height = 68.dp),
+                        contentScale = ContentScale.Fit,
+                        colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onPrimaryContainer)
+                    )
+                }
             }
             Spacer(Modifier.width(14.dp))
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -970,32 +977,42 @@ private fun PlayListScreen(state: GameScreenState, viewModel: GameViewModel) {
                                 Text(stringResource(R.string.completed_runs), style = MaterialTheme.typography.titleSmall)
                             }
                             gameResults.forEach { result ->
+                                val completedAt = DateFormat
+                                    .getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                                    .format(Date(result.completedAt))
+                                val resultsLabel = stringResource(R.string.view_results)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        if (result.totalTaskCount == null || result.totalStationCount == null) {
-                                            stringResource(
-                                                R.string.completed_run_legacy_summary,
-                                                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                                                    .format(Date(result.completedAt))
-                                            )
-                                        } else {
-                                            stringResource(
-                                                R.string.completed_run_summary,
-                                                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                                                    .format(Date(result.completedAt)),
-                                                result.score
-                                            )
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    OutlinedButton(
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(completedAt, style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            if (result.totalTaskCount == null || result.totalStationCount == null) {
+                                                stringResource(R.string.result_score_unavailable)
+                                            } else {
+                                                pluralStringResource(
+                                                    R.plurals.result_score,
+                                                    result.score.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                                                    result.score
+                                                )
+                                            },
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    IconButton(
                                         onClick = { viewModel.openCompletedSession(result.sessionId) },
-                                        enabled = !state.isLoadingSession
-                                    ) { IconLabel(QRhryIconKind.RESULTS, stringResource(R.string.view_results), iconSize = 18.dp) }
+                                        enabled = !state.isLoadingSession,
+                                        modifier = Modifier.semantics {
+                                            contentDescription = resultsLabel
+                                        }
+                                    ) {
+                                        QRhryIcon(QRhryIconKind.RESULTS, tint = MaterialTheme.colorScheme.primary)
+                                    }
                                 }
                             }
                         }
