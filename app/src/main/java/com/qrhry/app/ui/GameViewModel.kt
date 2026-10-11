@@ -10,6 +10,8 @@ import com.qrhry.app.data.GameRepository
 import com.qrhry.app.data.local.GameDatabaseHelper
 import com.qrhry.app.data.local.GameAssetStore
 import com.qrhry.app.data.local.ImportedAsset
+import com.qrhry.app.data.archive.GameArchiveImportPreview
+import com.qrhry.app.data.archive.GameArchiveService
 import com.qrhry.app.domain.Game
 import com.qrhry.app.domain.CompletedSessionResult
 import com.qrhry.app.domain.GameDraft
@@ -57,8 +59,16 @@ data class GameScreenState(
     val editingStation: com.qrhry.app.domain.Station? = null,
     val isSavingStation: Boolean = false,
     val isSavingTaskAnswer: Boolean = false,
-    val taskSkippedFeedback: Boolean = false
+    val taskSkippedFeedback: Boolean = false,
+    val archivePreview: GameArchiveImportPreview? = null,
+    val isProcessingArchive: Boolean = false,
+    val archiveSuccess: ArchiveUiSuccess? = null
 )
+
+enum class ArchiveUiSuccess {
+    EXPORTED,
+    IMPORTED
+}
 
 enum class GameScreenRoute {
     HOME,
@@ -81,11 +91,103 @@ enum class QrScanStatus {
 class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = GameRepository(GameDatabaseHelper(application))
     private val assetStore = GameAssetStore(application.filesDir)
+    private val archiveService = GameArchiveService(
+        contentResolver = application.contentResolver,
+        cacheDirectory = application.cacheDir,
+        repository = repository,
+        assetStore = assetStore
+    )
     private val mutableState = MutableStateFlow(GameScreenState())
     val state = mutableState.asStateFlow()
 
     init {
-        refreshGames()
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    archiveService.cleanupOrphanedImports()
+                    assetStore.cleanupOrphanedGameDirectories(repository.getAllGames().map { it.gameUuid }.toSet())
+                }
+            }
+            refreshGames()
+        }
+    }
+
+    fun exportGameArchive(gameId: Long, destination: Uri) {
+        if (mutableState.value.isProcessingArchive) return
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(isProcessingArchive = true, error = null, archiveSuccess = null)
+            try {
+                withContext(Dispatchers.IO) { archiveService.exportGameToUri(gameId, destination) }
+                mutableState.value = mutableState.value.copy(
+                    isProcessingArchive = false,
+                    archiveSuccess = ArchiveUiSuccess.EXPORTED
+                )
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(
+                    isProcessingArchive = false,
+                    error = exception.messageKeyOr(UserMessageKey.ARCHIVE_EXPORT_FAILED),
+                    archiveSuccess = null
+                )
+            }
+        }
+    }
+
+    fun inspectGameArchive(source: Uri) {
+        if (mutableState.value.isProcessingArchive) return
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(isProcessingArchive = true, error = null, archiveSuccess = null)
+            try {
+                val preview = withContext(Dispatchers.IO) { archiveService.inspectImport(source) }
+                mutableState.value = mutableState.value.copy(
+                    archivePreview = preview,
+                    isProcessingArchive = false
+                )
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(
+                    archivePreview = null,
+                    isProcessingArchive = false,
+                    error = exception.messageKeyOr(UserMessageKey.ARCHIVE_INVALID)
+                )
+            } finally {
+                runCatching {
+                    getApplication<Application>().contentResolver.releasePersistableUriPermission(
+                        source,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                }
+            }
+        }
+    }
+
+    fun cancelGameArchiveImport() {
+        val preview = mutableState.value.archivePreview ?: return
+        mutableState.value = mutableState.value.copy(archivePreview = null)
+        viewModelScope.launch(Dispatchers.IO) { archiveService.cancelImport(preview.token) }
+    }
+
+    fun confirmGameArchiveImport() {
+        val preview = mutableState.value.archivePreview ?: return
+        if (mutableState.value.isProcessingArchive) return
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(isProcessingArchive = true, error = null, archiveSuccess = null)
+            try {
+                val game = withContext(Dispatchers.IO) { archiveService.confirmImport(preview.token) }
+                mutableState.value = mutableState.value.copy(
+                    archivePreview = null,
+                    isProcessingArchive = false,
+                    savedGameId = game.id,
+                    archiveSuccess = ArchiveUiSuccess.IMPORTED
+                )
+                refreshGames()
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(
+                    archivePreview = null,
+                    isProcessingArchive = false,
+                    error = exception.messageKeyOr(UserMessageKey.ARCHIVE_IMPORT_FAILED),
+                    archiveSuccess = null
+                )
+            }
+        }
     }
 
     fun createGame(
@@ -629,4 +731,5 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (returningFromPlaySession) refreshGames()
     }
+
 }

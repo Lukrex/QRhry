@@ -4,8 +4,11 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.webkit.MimeTypeMap
 import com.qrhry.app.domain.StationMediaType
+import com.qrhry.app.domain.StationMedia
 import com.qrhry.app.domain.UserMessageException
 import com.qrhry.app.domain.UserMessageKey
+import com.qrhry.app.data.archive.GameArchiveBundle
+import com.qrhry.app.data.archive.GameArchiveLimits
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -23,7 +26,92 @@ data class ImportedAsset(
     val finalFile: File
 )
 
+data class StagedGameAssets(
+    val gameUuid: String,
+    val stagingDirectory: File,
+    val finalDirectory: File,
+    val mediaByStation: List<List<StationMedia>>
+)
+
 class GameAssetStore(private val filesDirectory: File) {
+    fun stageArchiveAssets(bundle: GameArchiveBundle, gameUuid: String): StagedGameAssets {
+        if (!isUuid(gameUuid)) throw UserMessageException(UserMessageKey.MEDIA_GAME_ID_INVALID)
+        val gamesDirectory = File(filesDirectory, "games").canonicalFile
+        if (!gamesDirectory.exists() && !gamesDirectory.mkdirs()) {
+            throw UserMessageException(UserMessageKey.MEDIA_STORE_FAILED)
+        }
+        val finalDirectory = File(gamesDirectory, gameUuid).canonicalFile
+        val stagingDirectory = File(gamesDirectory, ".qrhry-import-$gameUuid-${UUID.randomUUID()}")
+            .canonicalFile
+        if (!finalDirectory.path.startsWith(gamesDirectory.path + File.separator) ||
+            finalDirectory.exists() ||
+            !stagingDirectory.path.startsWith(gamesDirectory.path + File.separator) ||
+            !stagingDirectory.mkdirs()
+        ) throw UserMessageException(UserMessageKey.MEDIA_STORE_FAILED)
+
+        try {
+            val mediaByStation = bundle.manifest.stations.map { station ->
+                station.media.map { media ->
+                    val source = bundle.mediaFiles[media.entryPath]
+                        ?.takeIf(File::isFile)
+                        ?: throw UserMessageException(UserMessageKey.ARCHIVE_MEDIA_INVALID)
+                    val mediaId = UUID.randomUUID().toString()
+                    val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(media.mimeType)
+                        ?.takeIf { it.matches(Regex("[A-Za-z0-9]{1,10}")) }
+                        ?: "bin"
+                    val relativePath = "assets/$mediaId.$extension"
+                    val target = File(stagingDirectory, relativePath).canonicalFile
+                    if (!target.path.startsWith(stagingDirectory.path + File.separator)) {
+                        throw UserMessageException(UserMessageKey.ARCHIVE_MEDIA_INVALID)
+                    }
+                    target.parentFile?.mkdirs()
+                    val copied = copyAndHash(source, target, media.byteSize)
+                    if (copied.first != media.byteSize || copied.second != media.checksum) {
+                        throw UserMessageException(UserMessageKey.ARCHIVE_MEDIA_INVALID)
+                    }
+                    StationMedia(
+                        id = mediaId,
+                        stationId = 0L,
+                        mediaType = media.mediaType,
+                        relativePath = relativePath,
+                        mimeType = media.mimeType,
+                        originalFilename = media.originalFilename,
+                        checksum = copied.second,
+                        byteSize = copied.first,
+                        displayOrder = if (media.mediaType == StationMediaType.IMAGE) 0 else 1
+                    )
+                }
+            }
+            return StagedGameAssets(gameUuid, stagingDirectory, finalDirectory, mediaByStation)
+        } catch (exception: Exception) {
+            stagingDirectory.deleteRecursively()
+            if (exception is UserMessageException) throw exception
+            throw UserMessageException(UserMessageKey.ARCHIVE_MEDIA_INVALID)
+        }
+    }
+
+    fun promoteArchiveAssets(staged: StagedGameAssets) {
+        if (staged.finalDirectory.exists() || !staged.stagingDirectory.renameTo(staged.finalDirectory)) {
+            throw UserMessageException(UserMessageKey.MEDIA_STORE_FAILED)
+        }
+    }
+
+    fun discardArchiveAssets(staged: StagedGameAssets) {
+        staged.stagingDirectory.deleteRecursively()
+        staged.finalDirectory.deleteRecursively()
+    }
+
+    fun cleanupOrphanedGameDirectories(existingGameUuids: Set<String>) {
+        val gamesDirectory = File(filesDirectory, "games")
+        val staleBefore = System.currentTimeMillis() - STALE_IMPORT_AGE_MILLIS
+        gamesDirectory.listFiles()?.forEach { child ->
+            if (child.lastModified() < staleBefore &&
+                (child.name.startsWith(".qrhry-import-") ||
+                    (isUuid(child.name) && child.name !in existingGameUuids))
+            ) child.deleteRecursively()
+        }
+    }
+
     fun stageImport(
         resolver: ContentResolver,
         source: Uri,
@@ -120,5 +208,33 @@ class GameAssetStore(private val filesDirectory: File) {
             digest.update(buffer, 0, read)
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun copyAndHash(source: File, target: File, maxBytes: Long): Pair<Long, String> {
+        if (source.length() > maxBytes || maxBytes > GameArchiveLimits.MAX_ENTRY_BYTES) {
+            throw UserMessageException(UserMessageKey.ARCHIVE_LIMIT_EXCEEDED)
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        var byteSize = 0L
+        FileInputStream(source).use { input ->
+            FileOutputStream(target).use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    byteSize += read
+                    if (byteSize > maxBytes || byteSize > GameArchiveLimits.MAX_ENTRY_BYTES) {
+                        throw UserMessageException(UserMessageKey.ARCHIVE_LIMIT_EXCEEDED)
+                    }
+                    digest.update(buffer, 0, read)
+                    output.write(buffer, 0, read)
+                }
+            }
+        }
+        return byteSize to digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    companion object {
+        private const val STALE_IMPORT_AGE_MILLIS = 24L * 60 * 60 * 1000
     }
 }

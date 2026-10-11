@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -38,6 +39,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
@@ -239,6 +241,7 @@ fun GameScreen(
     val context = LocalContext.current
     val saveableStateHolder = rememberSaveableStateHolder()
     var pendingPick by remember { mutableStateOf<PendingMediaPick?>(null) }
+    var pendingExportGameId by remember { mutableStateOf<Long?>(null) }
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val target = pendingPick
         pendingPick = null
@@ -252,6 +255,21 @@ fun GameScreen(
     val pickMedia: (StationMediaType, (Uri) -> Unit) -> Unit = { mediaType, callback ->
         pendingPick = PendingMediaPick(mediaType, callback)
         mediaPicker.launch(arrayOf(if (mediaType == StationMediaType.IMAGE) "image/*" else "audio/*"))
+    }
+    val archiveExporter = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        val gameId = pendingExportGameId
+        pendingExportGameId = null
+        if (uri != null && gameId != null) viewModel.exportGameArchive(gameId, uri)
+    }
+    val archiveImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            viewModel.inspectGameArchive(uri)
+        }
     }
 
     BackHandler(enabled = state.route != GameScreenRoute.HOME) {
@@ -279,7 +297,16 @@ fun GameScreen(
             onDarkModeChange = onDarkModeChange,
             onBack = viewModel::navigateBack
         )
-        GameScreenRoute.CREATE -> GameLibraryScreen(state, viewModel, pickMedia)
+        GameScreenRoute.CREATE -> GameLibraryScreen(
+            state = state,
+            viewModel = viewModel,
+            onPickMedia = pickMedia,
+            onExportGame = { game ->
+                pendingExportGameId = game.id
+                archiveExporter.launch(gameArchiveFilename(game.title))
+            },
+            onImportArchive = { archiveImporter.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }
+        )
         GameScreenRoute.EDIT_STATION -> state.editingStation?.let { station ->
             StationEditScreen(
                 station = station,
@@ -443,14 +470,38 @@ private fun userMessageText(key: UserMessageKey): String = stringResource(
         UserMessageKey.GAMES_LOAD_FAILED -> R.string.error_games_load
         UserMessageKey.SESSION_START_FAILED -> R.string.error_session_start
         UserMessageKey.SCANNER_LOOKUP_FAILED -> R.string.error_scanner_lookup
+        UserMessageKey.ARCHIVE_INVALID -> R.string.error_archive_invalid
+        UserMessageKey.ARCHIVE_VERSION_UNSUPPORTED -> R.string.error_archive_version
+        UserMessageKey.ARCHIVE_LIMIT_EXCEEDED -> R.string.error_archive_limit
+        UserMessageKey.ARCHIVE_MEDIA_INVALID -> R.string.error_archive_media
+        UserMessageKey.ARCHIVE_EXPORT_FAILED -> R.string.error_archive_export
+        UserMessageKey.ARCHIVE_IMPORT_FAILED -> R.string.error_archive_import
     }
 )
+
+@Composable
+private fun scoringModeLabel(mode: TaskScoringMode): String = stringResource(
+    when (mode) {
+        TaskScoringMode.EVENTUAL_CORRECT -> R.string.scoring_eventual_correct
+        TaskScoringMode.FIRST_TRY_ONLY -> R.string.scoring_first_try_only
+    }
+)
+
+private fun gameArchiveFilename(title: String): String {
+    val safeTitle = title.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_")
+        .trim()
+        .take(100)
+        .ifBlank { "game" }
+    return "$safeTitle.qrhry"
+}
 
 @Composable
 private fun GameLibraryScreen(
     state: GameScreenState,
     viewModel: GameViewModel,
-    onPickMedia: (StationMediaType, (Uri) -> Unit) -> Unit
+    onPickMedia: (StationMediaType, (Uri) -> Unit) -> Unit,
+    onExportGame: (Game) -> Unit,
+    onImportArchive: () -> Unit
 ) {
     var gameTitle by rememberSaveable { mutableStateOf("") }
     var scoringModeName by rememberSaveable { mutableStateOf(TaskScoringMode.EVENTUAL_CORRECT.name) }
@@ -487,6 +538,11 @@ private fun GameLibraryScreen(
             ) {
                 Text(stringResource(R.string.scan_station_qr))
             }
+            OutlinedButton(
+                onClick = onImportArchive,
+                enabled = !state.isProcessingArchive,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(stringResource(R.string.import_game_archive)) }
             OutlinedTextField(
                 value = gameTitle,
                 onValueChange = { gameTitle = it },
@@ -600,9 +656,54 @@ private fun GameLibraryScreen(
                     SavedGame(
                         game,
                         onEditStation = viewModel::editStation,
-                        onScoringModeChange = viewModel::updateGameScoringMode
+                        onScoringModeChange = viewModel::updateGameScoringMode,
+                        onExport = onExportGame,
+                        isExporting = state.isProcessingArchive
                     )
                 }
+            }
+            if (state.isProcessingArchive) Text(stringResource(R.string.archive_processing))
+            state.archiveSuccess?.let { success ->
+                Text(
+                    stringResource(
+                        if (success == ArchiveUiSuccess.EXPORTED) R.string.archive_export_success
+                        else R.string.archive_import_success
+                    ),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            state.archivePreview?.let { preview ->
+                AlertDialog(
+                    onDismissRequest = viewModel::cancelGameArchiveImport,
+                    title = { Text(stringResource(R.string.archive_import_preview_title)) },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                stringResource(
+                                    R.string.archive_import_preview_body,
+                                    preview.title,
+                                    preview.stationCount,
+                                    preview.taskCount,
+                                    preview.mediaCount,
+                                    scoringModeLabel(preview.scoringMode)
+                                )
+                            )
+                            Text(stringResource(R.string.archive_import_identity_note))
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = viewModel::confirmGameArchiveImport,
+                            enabled = !state.isProcessingArchive
+                        ) { Text(stringResource(R.string.archive_import_confirm)) }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = viewModel::cancelGameArchiveImport,
+                            enabled = !state.isProcessingArchive
+                        ) { Text(stringResource(R.string.cancel)) }
+                    }
+                )
             }
         }
     }
@@ -815,7 +916,9 @@ private fun PlaySessionScreen(
 private fun SavedGame(
     game: Game,
     onEditStation: (com.qrhry.app.domain.Station) -> Unit,
-    onScoringModeChange: (Long, TaskScoringMode) -> Unit
+    onScoringModeChange: (Long, TaskScoringMode) -> Unit,
+    onExport: (Game) -> Unit,
+    isExporting: Boolean
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -827,6 +930,11 @@ private fun SavedGame(
                 scoringMode = game.scoringMode,
                 onScoringModeChange = { onScoringModeChange(game.id, it) }
             )
+            OutlinedButton(
+                onClick = { onExport(game) },
+                enabled = !isExporting,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(stringResource(R.string.export_game_archive)) }
             game.stations.forEachIndexed { index, station ->
                 Text(stringResource(R.string.station_index_title, index + 1, station.title), style = MaterialTheme.typography.bodyMedium)
                 if (station.bodyText.isNotBlank()) {

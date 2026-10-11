@@ -4,11 +4,11 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
-import androidx.compose.ui.test.hasRole
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNode
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -19,7 +19,6 @@ import androidx.core.os.LocaleListCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.qrhry.app.MainActivity
 import com.qrhry.app.R
-import androidx.compose.ui.semantics.Role
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -79,22 +78,21 @@ class AppLocalizationTest {
         composeRule.onNodeWithText("Možnosť 1").performTextInput("First authored option")
         composeRule.onNodeWithText("Možnosť 2").performTextInput("Second authored option")
 
-        composeRule.onNodeWithText("Domov").performClick()
-        composeRule.onNodeWithText("Nastavenia").performClick()
-        composeRule.onNodeWithText("English").performClick()
+        composeRule.activityRule.scenario.onActivity {
+            AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"))
+        }
         waitForLanguage("en")
         composeRule.activityRule.scenario.recreate()
         waitForLanguage("en")
-        composeRule.onNodeWithText("Back").performClick()
-        composeRule.onNodeWithText("Create / Edit").performClick()
 
-        composeRule.onNodeWithText("Hra vytvorená v angličtine").assertIsDisplayed()
-        composeRule.onNodeWithText("Nádvorie").assertIsDisplayed()
-        composeRule.onNodeWithText("Question authored in English").assertIsDisplayed()
-        composeRule.onNodeWithText("275").assertIsDisplayed()
-        composeRule.onNodeWithText("First authored option").assertIsDisplayed()
-        composeRule.onNodeWithText("Second authored option").assertIsDisplayed()
-        composeRule.onNodeWithText("Game title").assertIsDisplayed()
+        composeRule.onNodeWithText("Create / Edit").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Hra vytvorená v angličtine").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Nádvorie").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Question authored in English").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("275").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("First authored option").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Second authored option").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Game title").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -125,7 +123,7 @@ class AppLocalizationTest {
     @Test
     fun gameCreationShowsBothScoringPoliciesInSlovakAndEnglish() {
         composeRule.onNodeWithText("Vytvoriť / Upraviť").performClick()
-        composeRule.onNodeWithText("Ako sa udeľujú body za úlohy").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Ako sa udeľujú body za úlohy")[0].assertIsDisplayed()
         composeRule.onNodeWithText("Za správnu odpoveď, aj po opakovaní").assertIsDisplayed()
         composeRule.onNodeWithText("Iba za správnu odpoveď na prvý pokus").assertIsDisplayed()
 
@@ -142,6 +140,27 @@ class AppLocalizationTest {
     }
 
     @Test
+    fun archiveImportActionAndPreviewLabelsAreLocalized() {
+        composeRule.onNodeWithText("Vytvoriť / Upraviť").performClick()
+        composeRule.onNodeWithText("Importovať archív hry").assertIsDisplayed()
+        assertEquals("Exportovať archív hry", composeRule.activity.getString(R.string.export_game_archive))
+        assertEquals("Importovať túto hru?", composeRule.activity.getString(R.string.archive_import_preview_title))
+        assertEquals("Vytvorí sa samostatná kópia s novými QR kódmi stanovišť.", composeRule.activity.getString(R.string.archive_import_identity_note))
+
+        composeRule.onNodeWithText("Domov").performClick()
+        composeRule.onNodeWithText("Nastavenia").performClick()
+        composeRule.onNodeWithText("English").performClick()
+        waitForLanguage("en")
+        composeRule.onNodeWithText("Back").performClick()
+        composeRule.onNodeWithText("Create / Edit").performClick()
+
+        composeRule.onNodeWithText("Import game archive").assertIsDisplayed()
+        assertEquals("Export game archive", composeRule.activity.getString(R.string.export_game_archive))
+        assertEquals("Import this game?", composeRule.activity.getString(R.string.archive_import_preview_title))
+        assertEquals("This creates a separate copy with new station QR codes.", composeRule.activity.getString(R.string.archive_import_identity_note))
+    }
+
+    @Test
     fun darkModeSettingPersistsAcrossActivityRecreation() {
         composeRule.activity.getSharedPreferences(
             MainActivity.PREFERENCES_NAME,
@@ -151,19 +170,23 @@ class AppLocalizationTest {
         composeRule.onNodeWithText("Nastavenia").performClick()
         composeRule.onNodeWithText("Tmavý režim").assertIsDisplayed()
         assertEquals(lightColorScheme().surface.toArgb(), composeRule.activity.window.statusBarColor)
-        composeRule.onNode(hasRole(Role.Switch)).assertIsOff().performClick()
-        composeRule.onNode(hasRole(Role.Switch)).assertIsOn()
+        composeRule.onNodeWithContentDescription("Tmavý režim").assertIsOff().performClick()
+        composeRule.onNodeWithContentDescription("Tmavý režim").assertIsOn()
         composeRule.waitForIdle()
         assertEquals(darkColorScheme().surface.toArgb(), composeRule.activity.window.statusBarColor)
 
         composeRule.activityRule.scenario.recreate()
 
         composeRule.onNodeWithText("Nastavenia").assertIsDisplayed()
-        composeRule.onNode(hasRole(Role.Switch)).assertIsOn()
+        composeRule.onNodeWithContentDescription("Tmavý režim").assertIsOn()
     }
 
     private fun setApplicationLanguage(language: String) {
-        if (AppCompatDelegate.getApplicationLocales().get(0)?.language == language) return
+        if (AppCompatDelegate.getApplicationLocales().get(0)?.language == language) {
+            composeRule.activityRule.scenario.recreate()
+            waitForLanguage(language)
+            return
+        }
         composeRule.activityRule.scenario.onActivity {
             AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(language))
         }

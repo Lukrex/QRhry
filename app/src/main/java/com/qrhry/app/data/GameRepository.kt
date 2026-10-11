@@ -62,6 +62,129 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
 
     fun getGame(gameId: Long): Game? = getAllGames().firstOrNull { it.id == gameId }
 
+    fun getGameExportSnapshot(gameId: Long): Game? {
+        val database = databaseHelper.writableDatabase
+        database.beginTransactionNonExclusive()
+        try {
+            val game = database.rawQuery(
+                "SELECT id, title, game_uuid, content_version, updated_at, scoring_mode FROM games WHERE id = ?",
+                arrayOf(gameId.toString())
+            ).use { cursor ->
+                if (!cursor.moveToFirst()) return null
+                Game(
+                    id = cursor.getLong(0),
+                    title = cursor.getString(1),
+                    stations = getStations(database, gameId),
+                    gameUuid = cursor.getString(2),
+                    contentVersion = cursor.getInt(3),
+                    updatedAt = cursor.getLong(4),
+                    scoringMode = TaskScoringMode.valueOf(cursor.getString(5))
+                )
+            }
+            database.setTransactionSuccessful()
+            return game
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    fun importGame(
+        draft: GameDraft,
+        gameUuid: String,
+        mediaByStation: List<List<StationMedia>>
+    ): Game {
+        GameDraftValidator.validationError(draft)?.let { throw UserMessageException(it) }
+        if (!isCanonicalUuid(gameUuid) || mediaByStation.size != draft.stations.size) {
+            throw UserMessageException(UserMessageKey.ARCHIVE_INVALID)
+        }
+        mediaByStation.forEach { media ->
+            if (media.size > 2 || media.map { it.mediaType }.toSet().size != media.size || media.any {
+                    !isCanonicalUuid(it.id) ||
+                        !isSafeArchivePath(it.relativePath) ||
+                        !Regex("[0-9a-f]{64}").matches(it.checksum) ||
+                        it.byteSize <= 0L
+                }
+            ) throw UserMessageException(UserMessageKey.ARCHIVE_INVALID)
+        }
+
+        val database = databaseHelper.writableDatabase
+        var importedGame: Game? = null
+        database.beginTransaction()
+        try {
+            val now = System.currentTimeMillis()
+            val gameId = database.insertOrThrow(
+                "games",
+                null,
+                ContentValues().apply {
+                    put("title", draft.title.trim())
+                    put("game_uuid", gameUuid)
+                    put("content_version", 1)
+                    put("updated_at", now)
+                    put("scoring_mode", draft.scoringMode.name)
+                }
+            )
+            val importedStations = mutableListOf<Station>()
+            draft.stations.forEachIndexed { index, stationDraft ->
+                val qrToken = UUID.randomUUID().toString()
+                val stationId = database.insertOrThrow(
+                    "stations",
+                    null,
+                    ContentValues().apply {
+                        put("game_id", gameId)
+                        put("title", stationDraft.title.trim())
+                        put("body_text", stationDraft.bodyText.trim())
+                        put("position", index)
+                        put("qr_token", qrToken)
+                    }
+                )
+                insertStationTasks(database, stationId, stationDraft.tasks)
+                mediaByStation[index].forEach { media ->
+                    database.insertOrThrow("station_media", null, media.toContentValues(stationId))
+                }
+                importedStations += Station(
+                    id = stationId,
+                    gameId = gameId,
+                    title = stationDraft.title.trim(),
+                    bodyText = stationDraft.bodyText.trim(),
+                    position = index,
+                    qrToken = qrToken,
+                    media = mediaByStation[index].map { it.copy(stationId = stationId) },
+                    tasks = stationDraft.tasks.map { task ->
+                        MultipleChoiceTask(
+                            id = task.id,
+                            stationId = stationId,
+                            prompt = task.prompt.trim(),
+                            position = task.position,
+                            points = task.points,
+                            options = task.options.map { option ->
+                                TaskOption(
+                                    id = option.id,
+                                    taskId = task.id,
+                                    text = option.text.trim(),
+                                    position = option.position,
+                                    isCorrect = option.isCorrect
+                                )
+                            }
+                        )
+                    }
+                )
+            }
+            importedGame = Game(
+                id = gameId,
+                title = draft.title.trim(),
+                stations = importedStations,
+                gameUuid = gameUuid,
+                contentVersion = 1,
+                updatedAt = now,
+                scoringMode = draft.scoringMode
+            )
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+        return checkNotNull(importedGame)
+    }
+
     fun updateGameScoringMode(gameId: Long, scoringMode: TaskScoringMode): Boolean {
         val database = databaseHelper.writableDatabase
         database.beginTransaction()
@@ -487,8 +610,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             if (session.status != GameSessionStatus.IN_PROGRESS) return TaskSubmissionResult.SessionUnavailable
             val stationId = getTaskStationId(database, taskId)
                 ?: return TaskSubmissionResult.TaskUnavailable
-            if (!isCurrentVisitedStation(database, session, stationId)) return TaskSubmissionResult.TaskUnavailable
             if (isTaskCompleted(database, sessionId, taskId)) return TaskSubmissionResult.TaskAlreadyCompleted
+            if (!isCurrentVisitedStation(database, session, stationId)) return TaskSubmissionResult.TaskUnavailable
             val pending = database.rawQuery(
                 "SELECT id, selected_option_id FROM task_attempts WHERE session_id = ? AND task_id = ? AND submitted_at IS NULL",
                 arrayOf(sessionId.toString(), taskId)
@@ -980,6 +1103,14 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             arrayOf(System.currentTimeMillis(), gameId)
         )
     }
+
+    private fun isCanonicalUuid(value: String): Boolean = runCatching {
+        UUID.fromString(value).toString() == value
+    }.getOrDefault(false)
+
+    private fun isSafeArchivePath(value: String): Boolean =
+        value.startsWith("assets/") && !value.contains('\\') &&
+            value.split('/').none { it.isBlank() || it == "." || it == ".." }
 
     private fun StationMedia.toContentValues(stationId: Long) = ContentValues().apply {
         put("id", id)

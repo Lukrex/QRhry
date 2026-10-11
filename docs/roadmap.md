@@ -20,6 +20,8 @@
       Slovak UI, and backward-compatible v5→v6 migration.
 - [x] Game-wide eventual-correct and first-try-only scoring policies, plus
       explicit zero-point continuation after a wrong answer; SQLite v7.
+- [x] M8: versioned `.qrhry` export/import with SAF, media verification, fresh QR
+      identities, and atomic repository import with staged-file cleanup.
 
 ## Current scope
 

@@ -14,6 +14,10 @@ flow is:
 - `data.GameRepository` owns parameterized reads and transactional writes for
   game/station/task content, session progression, and scoring. It validates QR
   order, session/game/task ownership, answer submissions, and completion.
+- `data.archive.GameArchiveService` coordinates SAF import/export, while
+  `GameArchiveCodec` owns the versioned ZIP/JSON format and bounded validation.
+  `GameRepository` supplies consistent relational snapshots and transactional
+  imports; `GameAssetStore` verifies and promotes media directories.
 - `ui.GameViewModel` coordinates screen state and runs repository work on
   `Dispatchers.IO`; Compose does not decide progression or write persistence.
 - `ui.GameScreen` renders game/station editing, QR scanning, station media, and
@@ -70,3 +74,16 @@ not erase historical answers. A task with attempts is not deleted. No timers,
 hints, achievements, networking, additional task types, or branching are
 implemented. Future task types should use typed relational data rather than
 nullable columns on `stations` or opaque JSON.
+
+## Portable game archives
+
+The `.qrhry` v1 format is a content-only ZIP with a JSON manifest and generated
+asset aliases. It excludes sessions, visits, attempts, and results. Import
+creates fresh local identities, including new station QR tokens, so it creates a
+new QR set rather than reusing a source game's printed codes. Archive parsing
+is bounded and never extracts using untrusted ZIP paths. Media are staged and
+verified before a repository transaction inserts the game. The archive format,
+limits, and failure compensation are specified in `game-archive-format.md`;
+startup recovery removes staging/orphan directories older than 24 hours, so a
+recent in-progress import is not mistaken for abandoned work. SQLite remains at
+schema v7.
