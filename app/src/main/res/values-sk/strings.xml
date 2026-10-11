@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">QRhry</string>
-    <string name="home_choose_mode">Vyberte režim</string>
-    <string name="create_edit">Vytvoriť / Upraviť</string>
+    <string name="home_tagline">Tvor. Objavuj. Hraj.</string>
+    <string name="home_heading">Čo chceš robiť?</string>
+    <string name="home_subtitle">Vyber si, kam sa dnes vydáš.</string>
+    <string name="home_play_description">Začni novú hru alebo pokračuj tam, kde si skončil.</string>
+    <string name="home_create_title">Tvorba hier</string>
+    <string name="home_create_description">Vytváraj hry so stanovišťami, otázkami a médiami.</string>
     <string name="play">Hrať</string>
     <string name="settings">Nastavenia</string>
     <string name="language">Jazyk</string>

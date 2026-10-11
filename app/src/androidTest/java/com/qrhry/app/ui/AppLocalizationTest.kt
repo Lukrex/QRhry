@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.os.LocaleListCompat
+import androidx.core.os.ConfigurationCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.qrhry.app.MainActivity
 import com.qrhry.app.R
@@ -48,7 +49,7 @@ class AppLocalizationTest {
     @Test
     fun launchUsesSlovakDefaultAndExplicitLanguageChoicePersistsAcrossRecreation() {
         waitForLanguage("sk")
-        composeRule.onNodeWithText("Vyberte režim").assertIsDisplayed()
+        composeRule.onNodeWithText("Čo chceš robiť?").assertIsDisplayed()
 
         composeRule.onNodeWithText("Nastavenia").performClick()
         composeRule.onNodeWithText("English").performClick()
@@ -68,7 +69,7 @@ class AppLocalizationTest {
 
     @Test
     fun unsavedGameTaskAndOptionDraftSurviveLanguageChange() {
-        composeRule.onNodeWithText("Vytvoriť / Upraviť").performClick()
+        composeRule.onNodeWithText("Tvorba hier", substring = true).performClick()
         composeRule.onNodeWithText("Názov hry").performTextInput("Hra vytvorená v angličtine")
         composeRule.onAllNodesWithText("Názov stanovišťa")[0].performTextInput("Nádvorie")
         composeRule.onAllNodesWithText("Názov stanovišťa")[1].performTextInput("Knižnica")
@@ -85,7 +86,7 @@ class AppLocalizationTest {
         composeRule.activityRule.scenario.recreate()
         waitForLanguage("en")
 
-        composeRule.onNodeWithText("Create / Edit").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Create games").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Hra vytvorená v angličtine").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Nádvorie").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Question authored in English").performScrollTo().assertIsDisplayed()
@@ -99,7 +100,7 @@ class AppLocalizationTest {
 
     @Test
     fun creationDraftAndQuestionControlsSurviveScreenRotation() {
-        composeRule.onNodeWithText("Vytvoriť / Upraviť").performClick()
+        composeRule.onNodeWithText("Tvorba hier", substring = true).performClick()
         composeRule.onNodeWithText("Názov hry").performTextInput("Rozpracovaná hra")
         composeRule.onAllNodesWithText("Názov stanovišťa")[0].performTextInput("Prvé stanovište")
         composeRule.onAllNodesWithText("Názov stanovišťa")[1].performTextInput("Druhé stanovište")
@@ -162,7 +163,7 @@ class AppLocalizationTest {
 
     @Test
     fun gameCreationShowsBothScoringPoliciesInSlovakAndEnglish() {
-        composeRule.onNodeWithText("Vytvoriť / Upraviť").performClick()
+        composeRule.onNodeWithText("Tvorba hier", substring = true).performClick()
         composeRule.onAllNodesWithText("Ako sa udeľujú body za úlohy")[0].assertIsDisplayed()
         composeRule.onAllNodesWithText("Za správnu odpoveď, aj po opakovaní")[0].assertIsDisplayed()
         composeRule.onAllNodesWithText("Iba za správnu odpoveď na prvý pokus")[0].assertIsDisplayed()
@@ -172,7 +173,7 @@ class AppLocalizationTest {
         composeRule.onNodeWithText("English").performClick()
         waitForLanguage("en")
         composeRule.onNodeWithText("Back").performClick()
-        composeRule.onNodeWithText("Create / Edit").performClick()
+        composeRule.onNodeWithText("Create games", substring = true).performClick()
 
         composeRule.onAllNodesWithText("How question points are awarded")[0].assertIsDisplayed()
         composeRule.onAllNodesWithText("Award points for a correct answer, including retries")[0].assertIsDisplayed()
@@ -181,7 +182,7 @@ class AppLocalizationTest {
 
     @Test
     fun archiveImportActionAndPreviewLabelsAreLocalized() {
-        composeRule.onNodeWithText("Vytvoriť / Upraviť").performClick()
+        composeRule.onNodeWithText("Tvorba hier", substring = true).performClick()
         composeRule.onNodeWithText("Importovať archív hry").assertIsDisplayed()
         assertEquals("Exportovať archív hry", composeRule.activity.getString(R.string.export_game_archive))
         assertEquals("Importovať túto hru?", composeRule.activity.getString(R.string.archive_import_preview_title))
@@ -192,7 +193,7 @@ class AppLocalizationTest {
         composeRule.onNodeWithText("English").performClick()
         waitForLanguage("en")
         composeRule.onNodeWithText("Back").performClick()
-        composeRule.onNodeWithText("Create / Edit").performClick()
+        composeRule.onNodeWithText("Create games", substring = true).performClick()
 
         composeRule.onNodeWithText("Import game archive").assertIsDisplayed()
         assertEquals("Export game archive", composeRule.activity.getString(R.string.export_game_archive))
@@ -235,7 +236,8 @@ class AppLocalizationTest {
 
     private fun waitForLanguage(language: String) {
         composeRule.waitUntil(timeoutMillis = 10_000) {
-            AppCompatDelegate.getApplicationLocales().get(0)?.language == language
+            AppCompatDelegate.getApplicationLocales().get(0)?.language == language &&
+                ConfigurationCompat.getLocales(composeRule.activity.resources.configuration)[0]?.language == language
         }
         composeRule.waitForIdle()
         assertEquals(language, AppCompatDelegate.getApplicationLocales().get(0)?.language)
