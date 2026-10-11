@@ -553,7 +553,11 @@ private fun SettingsScreen(
                     ),
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                 ) {
-                    RadioButton(selected = selectedLanguage == "sk", onClick = null)
+                    RadioButton(
+                        selected = selectedLanguage == "sk",
+                        onClick = null,
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
                     Text(stringResource(R.string.language_slovenian))
                 }
                 Row(
@@ -564,7 +568,11 @@ private fun SettingsScreen(
                     ),
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                 ) {
-                    RadioButton(selected = selectedLanguage == "en", onClick = null)
+                    RadioButton(
+                        selected = selectedLanguage == "en",
+                        onClick = null,
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
                     Text(stringResource(R.string.language_english))
                 }
             }
@@ -1155,14 +1163,16 @@ private fun PlaySessionScreen(
                 }
             }
         }
-        if (taskSkippedFeedback && progress.currentStation == null) {
+        if (!isCompleted && taskSkippedFeedback && progress.currentStation == null) {
             StatusMessage(stringResource(R.string.task_skipped), icon = QRhryIconKind.FORWARD)
         }
-        scanResult?.let { result ->
-            StatusMessage(
-                stationScanMessage(result),
-                isError = result !is StationScanResult.Accepted
-            )
+        if (!isCompleted) {
+            scanResult?.let { result ->
+                StatusMessage(
+                    stationScanMessage(result),
+                    isError = result !is StationScanResult.Accepted
+                )
+            }
         }
     }
 }
