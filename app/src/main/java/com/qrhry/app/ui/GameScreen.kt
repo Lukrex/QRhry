@@ -6,8 +6,27 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -69,6 +88,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
@@ -294,8 +314,23 @@ fun GameScreen(
     } else {
         state.route.name
     }
-    saveableStateHolder.SaveableStateProvider(routeKey) {
-    when (state.route) {
+    AnimatedContent(
+        targetState = routeKey,
+        transitionSpec = {
+            val from = GameScreenRoute.valueOf(initialState.substringBefore(':'))
+            val to = GameScreenRoute.valueOf(targetState.substringBefore(':'))
+            val forward = isForwardRouteTransition(from, to)
+            val direction = if (forward) 1 else -1
+            (fadeIn(tween(190)) + slideInHorizontally(tween(220)) { direction * it / 18 }) togetherWith
+                (fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { -direction * it / 24 })
+        },
+        label = "screenRouteTransition"
+    ) { destinationKey ->
+        val destination = runCatching {
+            GameScreenRoute.valueOf(destinationKey.substringBefore(':'))
+        }.getOrDefault(GameScreenRoute.HOME)
+        saveableStateHolder.SaveableStateProvider(destinationKey) {
+    when (destination) {
         GameScreenRoute.HOME -> HomeScreen(
             onCreate = viewModel::openCreate,
             onPlay = viewModel::openPlayList,
@@ -357,11 +392,36 @@ fun GameScreen(
             StationDetailScreen(station, onBack = viewModel::navigateBack)
         }
     }
+        }
     }
+}
+
+private fun isForwardRouteTransition(from: GameScreenRoute, to: GameScreenRoute): Boolean = when (from to to) {
+    GameScreenRoute.HOME to GameScreenRoute.SETTINGS,
+    GameScreenRoute.HOME to GameScreenRoute.CREATE,
+    GameScreenRoute.HOME to GameScreenRoute.PLAY_LIST,
+    GameScreenRoute.CREATE to GameScreenRoute.EDIT_STATION,
+    GameScreenRoute.PLAY_LIST to GameScreenRoute.PLAY_SESSION,
+    GameScreenRoute.PLAY_SESSION to GameScreenRoute.SCANNER,
+    GameScreenRoute.SCANNER to GameScreenRoute.PLAY_SESSION,
+    GameScreenRoute.SCANNER to GameScreenRoute.STATION -> true
+    else -> false
 }
 
 @Composable
 private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () -> Unit) {
+    var hasEntered by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) { hasEntered = true }
+    val logoAlpha by animateFloatAsState(
+        targetValue = if (hasEntered) 1f else 0f,
+        animationSpec = tween(durationMillis = 240),
+        label = "homeLogoAlpha"
+    )
+    val logoScale by animateFloatAsState(
+        targetValue = if (hasEntered) 1f else 0.95f,
+        animationSpec = tween(durationMillis = 280),
+        label = "homeLogoScale"
+    )
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val pinSettingsAtBottom = maxHeight >= 620.dp
         Column(
@@ -373,7 +433,13 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
         ) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Surface(
-                modifier = Modifier.size(72.dp),
+                modifier = Modifier
+                    .size(72.dp)
+                    .graphicsLayer {
+                        alpha = logoAlpha
+                        scaleX = logoScale
+                        scaleY = logoScale
+                    },
                 shape = MaterialTheme.shapes.large,
                 color = MaterialTheme.colorScheme.primaryContainer
             ) {
@@ -381,24 +447,31 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
                     Image(
                         painter = painterResource(R.drawable.qrhry_logo_mark),
                         contentDescription = null,
-                        modifier = Modifier.size(width = 56.dp, height = 68.dp),
+                        modifier = Modifier
+                            .size(width = 56.dp, height = 68.dp),
                         contentScale = ContentScale.Fit,
                         colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onPrimaryContainer)
                     )
                 }
             }
             Spacer(Modifier.width(14.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    stringResource(R.string.app_name),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    stringResource(R.string.home_tagline),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            AnimatedVisibility(
+                visible = hasEntered,
+                enter = fadeIn(tween(220, delayMillis = 60)) +
+                    slideInVertically(tween(220, delayMillis = 60)) { it / 12 }
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        stringResource(R.string.app_name),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        stringResource(R.string.home_tagline),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
@@ -411,20 +484,32 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
             )
         }
 
-        HomeActionCard(
-            title = stringResource(R.string.play),
-            description = stringResource(R.string.home_play_description),
-            icon = QRhryIconKind.PLAY,
-            primary = true,
-            onClick = onPlay
-        )
-        HomeActionCard(
-            title = stringResource(R.string.home_create_title),
-            description = stringResource(R.string.home_create_description),
-            icon = QRhryIconKind.CREATE,
-            primary = false,
-            onClick = onCreate
-        )
+        AnimatedVisibility(
+            visible = hasEntered,
+            enter = fadeIn(tween(240, delayMillis = 80)) +
+                slideInVertically(tween(240, delayMillis = 80)) { it / 16 }
+        ) {
+            HomeActionCard(
+                title = stringResource(R.string.play),
+                description = stringResource(R.string.home_play_description),
+                icon = QRhryIconKind.PLAY,
+                primary = true,
+                onClick = onPlay
+            )
+        }
+        AnimatedVisibility(
+            visible = hasEntered,
+            enter = fadeIn(tween(240, delayMillis = 140)) +
+                slideInVertically(tween(240, delayMillis = 140)) { it / 16 }
+        ) {
+            HomeActionCard(
+                title = stringResource(R.string.home_create_title),
+                description = stringResource(R.string.home_create_description),
+                icon = QRhryIconKind.CREATE,
+                primary = false,
+                onClick = onCreate
+            )
+        }
 
         if (pinSettingsAtBottom) Spacer(Modifier.weight(1f))
         Surface(
@@ -460,11 +545,30 @@ private fun HomeActionCard(
 ) {
     val background = if (primary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
     val foreground = if (primary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.98f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "homeActionScale"
+    )
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(MaterialTheme.shapes.large)
-            .clickable(role = Role.Button, onClick = onClick),
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                role = Role.Button,
+                onClick = onClick
+            ),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = background),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
@@ -553,7 +657,11 @@ private fun SettingsScreen(
                     ),
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                 ) {
-                    RadioButton(selected = selectedLanguage == "sk", onClick = null)
+                    RadioButton(
+                        selected = selectedLanguage == "sk",
+                        onClick = null,
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
                     Text(stringResource(R.string.language_slovenian))
                 }
                 Row(
@@ -564,7 +672,11 @@ private fun SettingsScreen(
                     ),
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                 ) {
-                    RadioButton(selected = selectedLanguage == "en", onClick = null)
+                    RadioButton(
+                        selected = selectedLanguage == "en",
+                        onClick = null,
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
                     Text(stringResource(R.string.language_english))
                 }
             }
@@ -744,7 +856,9 @@ private fun GameLibraryScreen(
             stationForms.forEachIndexed { index, form ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(
-                        Modifier.padding(16.dp),
+                        Modifier
+                            .animateContentSize(animationSpec = tween(220))
+                            .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -1079,90 +1193,112 @@ private fun PlaySessionScreen(
                 }
             }
         }
-        displayedStation?.let { station ->
-            Text(
-                stringResource(
-                    if (station.id in progress.completedStationIds) R.string.completed_station
-                    else R.string.current_station
-                ),
-                style = MaterialTheme.typography.titleMedium
-            )
-            Text(station.title, style = MaterialTheme.typography.headlineSmall)
-            if (station.bodyText.isNotBlank()) Text(station.bodyText)
-            station.media.filter { it.mediaType == StationMediaType.IMAGE }.forEach { StationImage(it) }
-            station.media.filter { it.mediaType == StationMediaType.AUDIO }.forEach { StationAudioPlayer(it) }
-        }
-        if (isCompleted) {
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                QRhryIcon(QRhryIconKind.CHECK, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.game_completed), style = MaterialTheme.typography.headlineSmall)
+        AnimatedContent(
+            targetState = displayedStation,
+            contentKey = { it?.id },
+            transitionSpec = {
+                (fadeIn(tween(200)) + slideInVertically(tween(220)) { it / 20 }) togetherWith
+                    fadeOut(tween(140))
+            },
+            label = "stationContentTransition"
+        ) { station ->
+            if (station != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        stringResource(
+                            if (station.id in progress.completedStationIds) R.string.completed_station
+                            else R.string.current_station
+                        ),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(station.title, style = MaterialTheme.typography.headlineSmall)
+                    if (station.bodyText.isNotBlank()) Text(station.bodyText)
+                    station.media.filter { it.mediaType == StationMediaType.IMAGE }.forEach { StationImage(it) }
+                    station.media.filter { it.mediaType == StationMediaType.AUDIO }.forEach { StationAudioPlayer(it) }
+                }
             }
-            if (progress.resultTotalTaskCount == null || progress.resultTotalStationCount == null) {
-                Text(stringResource(R.string.result_score_unavailable))
-            } else {
+        }
+        AnimatedVisibility(
+            visible = isCompleted,
+            enter = fadeIn(tween(260)) + slideInVertically(tween(280)) { it / 18 }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    QRhryIcon(QRhryIconKind.CHECK, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.game_completed), style = MaterialTheme.typography.headlineSmall)
+                }
+                if (progress.resultTotalTaskCount == null || progress.resultTotalStationCount == null) {
+                    Text(stringResource(R.string.result_score_unavailable))
+                } else {
+                    Text(
+                        pluralStringResource(
+                            R.plurals.result_score,
+                            progress.score.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                            progress.score
+                        )
+                    )
+                }
                 Text(
-                    pluralStringResource(
-                        R.plurals.result_score,
-                        progress.score.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
-                        progress.score
-                    )
+                    if (progress.resultTotalTaskCount == null) {
+                        stringResource(R.string.result_tasks_total_unavailable, progress.completedTaskCount)
+                    } else {
+                        stringResource(
+                            R.string.result_tasks_completed,
+                            progress.completedTaskCount,
+                            progress.resultTotalTaskCount
+                        )
+                    }
+                )
+                Text(
+                    if (progress.resultTotalStationCount == null) {
+                        stringResource(R.string.result_stations_total_unavailable, progress.completedStationCount)
+                    } else {
+                        stringResource(
+                            R.string.result_stations_completed,
+                            progress.completedStationCount,
+                            progress.resultTotalStationCount
+                        )
+                    }
                 )
             }
-            Text(
-                if (progress.resultTotalTaskCount == null) {
-                    stringResource(R.string.result_tasks_total_unavailable, progress.completedTaskCount)
-                } else {
-                    stringResource(
-                        R.string.result_tasks_completed,
-                        progress.completedTaskCount,
-                        progress.resultTotalTaskCount
+        }
+        if (!isCompleted) {
+            if (progress.currentStation != null) {
+                progress.taskProgress.forEach { taskProgress ->
+                    MultipleChoiceTaskPlayer(
+                        progress = taskProgress,
+                        isSubmitting = isSubmittingAnswer,
+                        onSelectOption = { optionId -> onSelectOption(taskProgress.task.id, optionId) },
+                        onSubmit = { onSubmitTask(taskProgress.task.id) },
+                        onContinue = { onContinueTask(taskProgress.task.id) }
                     )
                 }
-            )
-            Text(
-                if (progress.resultTotalStationCount == null) {
-                    stringResource(R.string.result_stations_total_unavailable, progress.completedStationCount)
-                } else {
-                    stringResource(
-                        R.string.result_stations_completed,
-                        progress.completedStationCount,
-                        progress.resultTotalStationCount
-                    )
-                }
-            )
-        } else if (progress.currentStation != null) {
-            progress.taskProgress.forEach { taskProgress ->
-                MultipleChoiceTaskPlayer(
-                    progress = taskProgress,
-                    isSubmitting = isSubmittingAnswer,
-                    onSelectOption = { optionId -> onSelectOption(taskProgress.task.id, optionId) },
-                    onSubmit = { onSubmitTask(taskProgress.task.id) },
-                    onContinue = { onContinueTask(taskProgress.task.id) }
-                )
-            }
-        } else if (progress.stationVisits.isEmpty()) {
-            Text(stringResource(R.string.first_qr_intro))
-            Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
-                IconLabel(QRhryIconKind.SCAN, stringResource(R.string.scan_first_qr))
-            }
-        } else {
-            progress.nextStation?.let { next ->
-                Text(stringResource(R.string.next_station), style = MaterialTheme.typography.titleMedium)
-                Text(next.title, style = MaterialTheme.typography.headlineSmall)
+            } else if (progress.stationVisits.isEmpty()) {
+                Text(stringResource(R.string.first_qr_intro))
                 Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
-                    IconLabel(QRhryIconKind.SCAN, stringResource(R.string.scan_station))
+                    IconLabel(QRhryIconKind.SCAN, stringResource(R.string.scan_first_qr))
+                }
+            } else {
+                progress.nextStation?.let { next ->
+                    Text(stringResource(R.string.next_station), style = MaterialTheme.typography.titleMedium)
+                    Text(next.title, style = MaterialTheme.typography.headlineSmall)
+                    Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
+                        IconLabel(QRhryIconKind.SCAN, stringResource(R.string.scan_station))
+                    }
                 }
             }
         }
-        if (taskSkippedFeedback && progress.currentStation == null) {
+        if (!isCompleted && taskSkippedFeedback && progress.currentStation == null) {
             StatusMessage(stringResource(R.string.task_skipped), icon = QRhryIconKind.FORWARD)
         }
-        scanResult?.let { result ->
-            StatusMessage(
-                stationScanMessage(result),
-                isError = result !is StationScanResult.Accepted
-            )
+        if (!isCompleted) {
+            scanResult?.let { result ->
+                StatusMessage(
+                    stationScanMessage(result),
+                    isError = result !is StationScanResult.Accepted
+                )
+            }
         }
     }
 }
@@ -1545,7 +1681,9 @@ private fun MultipleChoiceTaskEditor(
         color = MaterialTheme.colorScheme.surfaceVariant
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier
+                .animateContentSize(animationSpec = tween(220))
+                .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Column {
@@ -1687,7 +1825,10 @@ private fun MultipleChoiceTaskPlayer(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(progress.task.prompt, style = MaterialTheme.typography.titleLarge)
-            if (progress.isCompleted) {
+            AnimatedVisibility(
+                visible = progress.isCompleted,
+                enter = fadeIn(tween(220)) + scaleIn(initialScale = 0.96f, animationSpec = tween(220))
+            ) {
                 if (progress.isSkipped) {
                     StatusMessage(stringResource(R.string.task_skipped), icon = QRhryIconKind.FORWARD)
                 } else {
@@ -1703,11 +1844,15 @@ private fun MultipleChoiceTaskPlayer(
                         )
                     }
                 }
-            } else {
-                if (progress.pendingAttempt == null) {
-                    progress.lastSubmittedAttempt?.takeIf { it.correctness == false }?.let {
-                        StatusMessage(stringResource(R.string.incorrect_choose_again), isError = true)
-                    }
+            }
+            if (!progress.isCompleted) {
+                AnimatedVisibility(
+                    visible = progress.pendingAttempt == null &&
+                        progress.lastSubmittedAttempt?.correctness == false,
+                    enter = fadeIn(tween(160)) + expandVertically(tween(180)),
+                    exit = fadeOut(tween(120)) + shrinkVertically(tween(150))
+                ) {
+                    StatusMessage(stringResource(R.string.incorrect_choose_again), isError = true)
                 }
                 progress.task.options.forEach { option ->
                     Row(
