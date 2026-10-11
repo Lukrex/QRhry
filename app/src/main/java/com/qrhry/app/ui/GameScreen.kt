@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +54,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -352,18 +354,38 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 24.dp, vertical = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
-        Text(stringResource(R.string.home_choose_mode), style = MaterialTheme.typography.titleLarge)
-        Button(onClick = onCreate, modifier = Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.primaryContainer
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    stringResource(R.string.app_name),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    stringResource(R.string.home_choose_mode),
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+        Button(onClick = onCreate, modifier = Modifier.fillMaxWidth().height(56.dp)) {
             Text(stringResource(R.string.create_edit))
         }
-        OutlinedButton(onClick = onPlay, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = onPlay, modifier = Modifier.fillMaxWidth().height(56.dp)) {
             Text(stringResource(R.string.play))
         }
-        OutlinedButton(onClick = onSettings, modifier = Modifier.fillMaxWidth()) {
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick = onSettings, modifier = Modifier.align(Alignment.CenterHorizontally).height(48.dp)) {
             Text(stringResource(R.string.settings))
         }
     }
@@ -378,7 +400,7 @@ private fun SettingsScreen(
     onBack: () -> Unit
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(20.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         val darkModeLabel = stringResource(R.string.dark_mode)
@@ -389,40 +411,46 @@ private fun SettingsScreen(
             Text(stringResource(R.string.settings), style = MaterialTheme.typography.headlineSmall)
             OutlinedButton(onClick = onBack) { Text(stringResource(R.string.back)) }
         }
-        Text(stringResource(R.string.language), style = MaterialTheme.typography.titleMedium)
-        Row(
-            modifier = Modifier.fillMaxWidth().selectable(
-                selected = selectedLanguage == "sk",
-                onClick = { onSelectLanguage("sk") },
-                role = Role.RadioButton
-            ),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-        ) {
-            RadioButton(selected = selectedLanguage == "sk", onClick = null)
-            Text(stringResource(R.string.language_slovenian))
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.language), style = MaterialTheme.typography.titleMedium)
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(52.dp).selectable(
+                        selected = selectedLanguage == "sk",
+                        onClick = { onSelectLanguage("sk") },
+                        role = Role.RadioButton
+                    ),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    RadioButton(selected = selectedLanguage == "sk", onClick = null)
+                    Text(stringResource(R.string.language_slovenian))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(52.dp).selectable(
+                        selected = selectedLanguage == "en",
+                        onClick = { onSelectLanguage("en") },
+                        role = Role.RadioButton
+                    ),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    RadioButton(selected = selectedLanguage == "en", onClick = null)
+                    Text(stringResource(R.string.language_english))
+                }
+            }
         }
-        Row(
-            modifier = Modifier.fillMaxWidth().selectable(
-                selected = selectedLanguage == "en",
-                onClick = { onSelectLanguage("en") },
-                role = Role.RadioButton
-            ),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-        ) {
-            RadioButton(selected = selectedLanguage == "en", onClick = null)
-            Text(stringResource(R.string.language_english))
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-        ) {
-            Text(darkModeLabel)
-            Switch(
-                modifier = Modifier.semantics { contentDescription = darkModeLabel },
-                checked = isDarkMode,
-                onCheckedChange = onDarkModeChange
-            )
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Text(darkModeLabel)
+                Switch(
+                    modifier = Modifier.semantics { contentDescription = darkModeLabel },
+                    checked = isDarkMode,
+                    onCheckedChange = onDarkModeChange
+                )
+            }
         }
     }
 }
@@ -528,10 +556,10 @@ private fun GameLibraryScreen(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(stringResource(R.string.create_edit), style = MaterialTheme.typography.titleLarge)
-                    OutlinedButton(onClick = viewModel::navigateBack) { Text(stringResource(R.string.home)) }
-                }
+            ) {
+                Text(stringResource(R.string.create_edit), style = MaterialTheme.typography.headlineSmall)
+                OutlinedButton(onClick = viewModel::navigateBack) { Text(stringResource(R.string.home)) }
+            }
             OutlinedButton(
                 onClick = viewModel::openScanner,
                 modifier = Modifier.fillMaxWidth()
@@ -543,68 +571,82 @@ private fun GameLibraryScreen(
                 enabled = !state.isProcessingArchive,
                 modifier = Modifier.fillMaxWidth()
             ) { Text(stringResource(R.string.import_game_archive)) }
-            OutlinedTextField(
-                value = gameTitle,
-                onValueChange = { gameTitle = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.game_title)) },
-                singleLine = true
-            )
-            GameScoringModeSelector(
-                scoringMode = TaskScoringMode.valueOf(scoringModeName),
-                onScoringModeChange = { scoringModeName = it.name }
-            )
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = gameTitle,
+                        onValueChange = { gameTitle = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.game_title)) },
+                        singleLine = true
+                    )
+                    GameScoringModeSelector(
+                        scoringMode = TaskScoringMode.valueOf(scoringModeName),
+                        onScoringModeChange = { scoringModeName = it.name }
+                    )
+                }
+            }
 
             stationForms.forEachIndexed { index, form ->
-                Text(stringResource(R.string.station_number, index + 1), style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(
-                    value = form.title,
-                    onValueChange = { value -> stationForms = stationForms.updated(index) { it.copy(title = value) } },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(stringResource(R.string.station_title)) },
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = form.bodyText,
-                    onValueChange = { value -> stationForms = stationForms.updated(index) { it.copy(bodyText = value) } },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(stringResource(R.string.station_text)) },
-                    minLines = 2
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
-                        onPickMedia(StationMediaType.IMAGE) { uri ->
-                            stationForms = stationForms.updated(index) { it.copy(imageUri = uri) }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            stringResource(R.string.station_number, index + 1),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        OutlinedTextField(
+                            value = form.title,
+                            onValueChange = { value -> stationForms = stationForms.updated(index) { it.copy(title = value) } },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(stringResource(R.string.station_title)) },
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = form.bodyText,
+                            onValueChange = { value -> stationForms = stationForms.updated(index) { it.copy(bodyText = value) } },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(stringResource(R.string.station_text)) },
+                            minLines = 2
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                onPickMedia(StationMediaType.IMAGE) { uri ->
+                                    stationForms = stationForms.updated(index) { it.copy(imageUri = uri) }
+                                }
+                            }) {
+                                Text(stringResource(if (form.imageUri == null) R.string.choose_image else R.string.replace_image))
+                            }
+                            OutlinedButton(onClick = {
+                                onPickMedia(StationMediaType.AUDIO) { uri ->
+                                    stationForms = stationForms.updated(index) { it.copy(audioUri = uri) }
+                                }
+                            }) {
+                                Text(stringResource(if (form.audioUri == null) R.string.choose_audio else R.string.replace_audio))
+                            }
                         }
-                    }) {
-                        Text(stringResource(if (form.imageUri == null) R.string.choose_image else R.string.replace_image))
+                        form.imageUri?.let { Text(stringResource(R.string.image_selected, it.lastPathSegment.orEmpty())) }
+                        form.audioUri?.let { Text(stringResource(R.string.audio_selected, it.lastPathSegment.orEmpty())) }
+                        if (form.task == null) {
+                            OutlinedButton(onClick = {
+                                stationForms = stationForms.updated(index) {
+                                    it.copy(task = MultipleChoiceTaskFormState())
+                                }
+                            }) { Text(stringResource(R.string.add_multiple_choice_task)) }
+                        } else {
+                            MultipleChoiceTaskEditor(
+                                task = form.task,
+                                onChange = { task ->
+                                    stationForms = stationForms.updated(index) { it.copy(task = task) }
+                                },
+                                onRemove = {
+                                    stationForms = stationForms.updated(index) { it.copy(task = null) }
+                                }
+                            )
+                        }
                     }
-                    OutlinedButton(onClick = {
-                        onPickMedia(StationMediaType.AUDIO) { uri ->
-                            stationForms = stationForms.updated(index) { it.copy(audioUri = uri) }
-                        }
-                    }) {
-                        Text(stringResource(if (form.audioUri == null) R.string.choose_audio else R.string.replace_audio))
-                    }
-                }
-                form.imageUri?.let { Text(stringResource(R.string.image_selected, it.lastPathSegment.orEmpty())) }
-                form.audioUri?.let { Text(stringResource(R.string.audio_selected, it.lastPathSegment.orEmpty())) }
-                if (form.task == null) {
-                    OutlinedButton(onClick = {
-                        stationForms = stationForms.updated(index) {
-                            it.copy(task = MultipleChoiceTaskFormState())
-                        }
-                    }) { Text(stringResource(R.string.add_multiple_choice_task)) }
-                } else {
-                    MultipleChoiceTaskEditor(
-                        task = form.task,
-                        onChange = { task ->
-                            stationForms = stationForms.updated(index) { it.copy(task = task) }
-                        },
-                        onRemove = {
-                            stationForms = stationForms.updated(index) { it.copy(task = null) }
-                        }
-                    )
                 }
             }
 
@@ -810,19 +852,25 @@ private fun PlaySessionScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         OutlinedButton(onClick = onBack) { Text(stringResource(R.string.back_to_play)) }
-        Text(progress.gameTitle, style = MaterialTheme.typography.titleLarge)
+        Text(progress.gameTitle, style = MaterialTheme.typography.headlineSmall)
         if (!isCompleted) {
-            Text(
-                stringResource(R.string.progress_count, progress.completedStationCount, progress.totalStationCount),
-                style = MaterialTheme.typography.titleMedium
-            )
-            Text(
-                pluralStringResource(
-                    R.plurals.current_score,
-                    progress.score.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
-                    progress.score
-                )
-            )
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        stringResource(R.string.progress_count, progress.completedStationCount, progress.totalStationCount),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        pluralStringResource(
+                            R.plurals.current_score,
+                            progress.score.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                            progress.score
+                        ),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
         }
         displayedStation?.let { station ->
             Text(
@@ -986,6 +1034,9 @@ private fun QrScannerScreen(
     onScan: () -> Unit,
     onBack: () -> Unit
 ) {
+    val isError = status == QrScanStatus.MALFORMED ||
+        status == QrScanStatus.UNKNOWN || status == QrScanStatus.SCANNER_ERROR ||
+        (sessionScanResult != null && sessionScanResult !is StationScanResult.Accepted)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1000,14 +1051,19 @@ private fun QrScannerScreen(
             status == QrScanStatus.SCANNER_ERROR -> stringResource(R.string.scanner_failure)
             else -> stringResource(R.string.scan_guidance)
             }
-        Text(
-            message,
-            color = if (status == QrScanStatus.MALFORMED ||
-                status == QrScanStatus.UNKNOWN || status == QrScanStatus.SCANNER_ERROR ||
-                (sessionScanResult != null && sessionScanResult !is StationScanResult.Accepted)
-            ) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-        )
-        Button(onClick = onScan, enabled = !isLookingUpStation) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium,
+            color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+        ) {
+            Text(
+                message,
+                modifier = Modifier.padding(18.dp),
+                color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
+        Button(onClick = onScan, enabled = !isLookingUpStation, modifier = Modifier.fillMaxWidth().height(56.dp)) {
             Text(stringResource(R.string.open_camera_scanner))
         }
         OutlinedButton(onClick = onBack) {
@@ -1232,7 +1288,10 @@ private fun MultipleChoiceTaskEditor(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(stringResource(R.string.multiple_choice_task), style = MaterialTheme.typography.titleMedium)
-            OutlinedButton(onClick = onRemove) { Text(stringResource(R.string.remove_task)) }
+            TextButton(
+                onClick = onRemove,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            ) { Text(stringResource(R.string.remove_task)) }
         }
         OutlinedTextField(
             value = task.prompt,
@@ -1248,48 +1307,65 @@ private fun MultipleChoiceTaskEditor(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true
         )
+        Text(stringResource(R.string.answer_options), style = MaterialTheme.typography.titleSmall)
         task.options.forEachIndexed { index, option ->
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                RadioButton(
-                    selected = option.isCorrect,
-                    onClick = {
-                        onChange(task.copy(options = task.options.mapIndexed { optionIndex, item ->
-                            item.copy(isCorrect = optionIndex == index)
-                        }))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Column(
+                    modifier = Modifier.padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        RadioButton(
+                            modifier = Modifier.padding(start = 8.dp, end = 4.dp),
+                            selected = option.isCorrect,
+                            onClick = {
+                                onChange(task.copy(options = task.options.mapIndexed { optionIndex, item ->
+                                    item.copy(isCorrect = optionIndex == index)
+                                }))
+                            }
+                        )
+                        OutlinedTextField(
+                            value = option.text,
+                            onValueChange = { value ->
+                                onChange(task.copy(options = task.options.updated(index) { it.copy(text = value) }))
+                            },
+                            modifier = Modifier.weight(1f),
+                            label = { Text(stringResource(R.string.option_number, index + 1)) },
+                            singleLine = true
+                        )
                     }
-                )
-                OutlinedTextField(
-                    value = option.text,
-                    onValueChange = { value ->
-                        onChange(task.copy(options = task.options.updated(index) { it.copy(text = value) }))
-                    },
-                    modifier = Modifier.weight(1f),
-                    label = { Text(stringResource(R.string.option_number, index + 1)) },
-                    singleLine = true
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        val options = task.options.toMutableList()
-                        val moved = options.removeAt(index)
-                        options.add(index - 1, moved)
-                        onChange(task.copy(options = options))
-                    },
-                    enabled = index > 0
-                ) { Text(stringResource(R.string.move_up)) }
-                OutlinedButton(
-                    onClick = {
-                        val options = task.options.toMutableList()
-                        val moved = options.removeAt(index)
-                        options.add(index + 1, moved)
-                        onChange(task.copy(options = options))
-                    },
-                    enabled = index < task.options.lastIndex
-                ) { Text(stringResource(R.string.move_down)) }
-                OutlinedButton(
-                    onClick = { onChange(task.copy(options = task.options.filterIndexed { i, _ -> i != index })) }
-                ) { Text(stringResource(R.string.remove_option)) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                val options = task.options.toMutableList()
+                                val moved = options.removeAt(index)
+                                options.add(index - 1, moved)
+                                onChange(task.copy(options = options))
+                            },
+                            enabled = index > 0,
+                            modifier = Modifier.weight(1f)
+                        ) { Text(stringResource(R.string.move_up)) }
+                        OutlinedButton(
+                            onClick = {
+                                val options = task.options.toMutableList()
+                                val moved = options.removeAt(index)
+                                options.add(index + 1, moved)
+                                onChange(task.copy(options = options))
+                            },
+                            enabled = index < task.options.lastIndex,
+                            modifier = Modifier.weight(1f)
+                        ) { Text(stringResource(R.string.move_down)) }
+                    }
+                    TextButton(
+                        onClick = { onChange(task.copy(options = task.options.filterIndexed { i, _ -> i != index })) },
+                        modifier = Modifier.align(Alignment.End),
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) { Text(stringResource(R.string.remove_option)) }
+                }
             }
         }
         OutlinedButton(
@@ -1306,47 +1382,57 @@ private fun MultipleChoiceTaskPlayer(
     onSubmit: () -> Unit,
     onContinue: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(progress.task.prompt, style = MaterialTheme.typography.titleLarge)
-        if (progress.isCompleted) {
-            if (progress.isSkipped) {
-                Text(stringResource(R.string.task_skipped))
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(progress.task.prompt, style = MaterialTheme.typography.titleLarge)
+            if (progress.isCompleted) {
+                if (progress.isSkipped) {
+                    Text(stringResource(R.string.task_skipped))
+                } else {
+                    Text(
+                        pluralStringResource(
+                            R.plurals.task_complete_points,
+                            progress.awardedPoints,
+                            progress.awardedPoints
+                        )
+                    )
+                }
             } else {
-                Text(
-                    pluralStringResource(
-                        R.plurals.task_complete_points,
-                        progress.awardedPoints,
-                        progress.awardedPoints
-                    )
-                )
-            }
-        } else {
-            if (progress.pendingAttempt == null) {
-                progress.lastSubmittedAttempt?.takeIf { it.correctness == false }?.let {
-                    Text(stringResource(R.string.incorrect_choose_again), color = MaterialTheme.colorScheme.error)
+                if (progress.pendingAttempt == null) {
+                    progress.lastSubmittedAttempt?.takeIf { it.correctness == false }?.let {
+                        Text(stringResource(R.string.incorrect_choose_again), color = MaterialTheme.colorScheme.error)
+                    }
                 }
-            }
-            progress.task.options.forEach { option ->
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    RadioButton(
-                        selected = progress.pendingAttempt?.selectedOptionId == option.id,
-                        onClick = { onSelectOption(option.id) },
-                        enabled = !isSubmitting
-                    )
-                    Text(option.text)
+                progress.task.options.forEach { option ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(52.dp).selectable(
+                            selected = progress.pendingAttempt?.selectedOptionId == option.id,
+                            onClick = { onSelectOption(option.id) },
+                            enabled = !isSubmitting,
+                            role = Role.RadioButton
+                        ),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = progress.pendingAttempt?.selectedOptionId == option.id,
+                            onClick = null,
+                            enabled = !isSubmitting
+                        )
+                        Text(option.text)
+                    }
                 }
-            }
-            Button(
-                onClick = onSubmit,
-                enabled = progress.pendingAttempt != null && !isSubmitting,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text(stringResource(if (isSubmitting) R.string.submitting else R.string.submit_answer)) }
-            if (progress.hasIncorrectSubmission) {
-                OutlinedButton(
-                    onClick = onContinue,
-                    enabled = !isSubmitting,
+                Button(
+                    onClick = onSubmit,
+                    enabled = progress.pendingAttempt != null && !isSubmitting,
                     modifier = Modifier.fillMaxWidth()
-                ) { Text(stringResource(R.string.continue_without_correct)) }
+                ) { Text(stringResource(if (isSubmitting) R.string.submitting else R.string.submit_answer)) }
+                if (progress.hasIncorrectSubmission) {
+                    OutlinedButton(
+                        onClick = onContinue,
+                        enabled = !isSubmitting,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(stringResource(R.string.continue_without_correct)) }
+                }
             }
         }
     }

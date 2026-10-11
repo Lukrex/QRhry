@@ -5,8 +5,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
@@ -20,6 +18,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.qrhry.app.ui.GameScreen
 import com.qrhry.app.ui.GameViewModel
+import com.qrhry.app.ui.QRhryTheme
 
 class MainActivity : AppCompatActivity() {
     private val gameViewModel: GameViewModel by viewModels()
@@ -30,16 +29,16 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         isDarkMode = preferences.getBoolean(PREFERENCE_DARK_MODE, false)
         setContent {
-            val colorScheme = if (isDarkMode) darkColorScheme() else lightColorScheme()
-            SideEffect {
-                window.statusBarColor = colorScheme.surface.toArgb()
-                window.navigationBarColor = colorScheme.surface.toArgb()
-                WindowCompat.getInsetsController(window, window.decorView).apply {
-                    isAppearanceLightStatusBars = !isDarkMode
-                    isAppearanceLightNavigationBars = !isDarkMode
+            QRhryTheme(darkTheme = isDarkMode) {
+                val colors = MaterialTheme.colorScheme
+                SideEffect {
+                    window.statusBarColor = colors.surface.toArgb()
+                    window.navigationBarColor = colors.surface.toArgb()
+                    WindowCompat.getInsetsController(window, window.decorView).apply {
+                        isAppearanceLightStatusBars = !isDarkMode
+                        isAppearanceLightNavigationBars = !isDarkMode
+                    }
                 }
-            }
-            MaterialTheme(colorScheme = colorScheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

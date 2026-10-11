@@ -1,5 +1,7 @@
 package com.qrhry.app.ui
 
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
@@ -12,8 +14,6 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.os.LocaleListCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -96,6 +96,41 @@ class AppLocalizationTest {
     }
 
     @Test
+    fun creationDraftAndQuestionControlsSurviveScreenRotation() {
+        composeRule.onNodeWithText("Vytvoriť / Upraviť").performClick()
+        composeRule.onNodeWithText("Názov hry").performTextInput("Rozpracovaná hra")
+        composeRule.onAllNodesWithText("Názov stanovišťa")[0].performTextInput("Prvé stanovište")
+        composeRule.onAllNodesWithText("Názov stanovišťa")[1].performTextInput("Druhé stanovište")
+        composeRule.onAllNodesWithText("Pridať úlohu s výberom odpovede")[0].performClick()
+        composeRule.onNodeWithText("Otázka").performTextInput("Otázka po otočení")
+        composeRule.onNodeWithText("Možnosť 1").performTextInput("Prvá odpoveď")
+        composeRule.onAllNodesWithText("Odstrániť možnosť")[0]
+            .performScrollTo()
+            .assertIsDisplayed()
+
+        try {
+            composeRule.activityRule.scenario.onActivity {
+                it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            }
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                composeRule.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            }
+            composeRule.waitForIdle()
+
+            composeRule.onNodeWithText("Rozpracovaná hra").performScrollTo().assertIsDisplayed()
+            composeRule.onNodeWithText("Otázka po otočení").performScrollTo().assertIsDisplayed()
+            composeRule.onNodeWithText("Prvá odpoveď").performScrollTo().assertIsDisplayed()
+            composeRule.onAllNodesWithText("Odstrániť možnosť")[0]
+                .performScrollTo()
+                .assertIsDisplayed()
+        } finally {
+            composeRule.activityRule.scenario.onActivity {
+                it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+        }
+    }
+
+    @Test
     fun scoringAndResultLabelsAreLocalizedInBothSupportedLanguages() {
         waitForLanguage("sk")
         assertEquals("Skóre: 650 bodov", composeRule.activity.resources.getQuantityString(R.plurals.result_score, 650, 650))
@@ -169,11 +204,11 @@ class AppLocalizationTest {
         composeRule.activityRule.scenario.recreate()
         composeRule.onNodeWithText("Nastavenia").performClick()
         composeRule.onNodeWithText("Tmavý režim").assertIsDisplayed()
-        assertEquals(lightColorScheme().surface.toArgb(), composeRule.activity.window.statusBarColor)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFFFFFEFA).toArgb(), composeRule.activity.window.statusBarColor)
         composeRule.onNodeWithContentDescription("Tmavý režim").assertIsOff().performClick()
         composeRule.onNodeWithContentDescription("Tmavý režim").assertIsOn()
         composeRule.waitForIdle()
-        assertEquals(darkColorScheme().surface.toArgb(), composeRule.activity.window.statusBarColor)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF1A2721).toArgb(), composeRule.activity.window.statusBarColor)
 
         composeRule.activityRule.scenario.recreate()
 
