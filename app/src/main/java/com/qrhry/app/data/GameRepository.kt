@@ -108,9 +108,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         }
 
         val database = databaseHelper.writableDatabase
-        var importedGame: Game? = null
         database.beginTransaction()
-        try {
+        return try {
             val now = System.currentTimeMillis()
             val gameId = database.insertOrThrow(
                 "games",
@@ -169,7 +168,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     }
                 )
             }
-            importedGame = Game(
+            val importedGame = Game(
                 id = gameId,
                 title = draft.title.trim(),
                 stations = importedStations,
@@ -179,10 +178,10 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 scoringMode = draft.scoringMode
             )
             database.setTransactionSuccessful()
+            importedGame
         } finally {
             database.endTransaction()
         }
-        return checkNotNull(importedGame)
     }
 
     fun updateGameScoringMode(gameId: Long, scoringMode: TaskScoringMode): Boolean {

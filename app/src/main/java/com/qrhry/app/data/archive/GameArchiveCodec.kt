@@ -35,7 +35,6 @@ class GameArchiveCodec {
             val mediaFiles = linkedMapOf<String, File>()
             val manifest = ZipFile(archiveFile).use { zip ->
                 val entries = zip.entries().toListChecked()
-                if (entries.isEmpty() || entries.size > GameArchiveLimits.MAX_ENTRIES) limitExceeded()
                 val entriesByName = linkedMapOf<String, ZipEntry>()
                 entries.forEach { entry ->
                     if (entry.isDirectory || !isAllowedEntryName(entry.name) || entriesByName.put(entry.name, entry) != null) {
@@ -54,15 +53,12 @@ class GameArchiveCodec {
                 }
 
                 var totalBytes = manifestBytes.size.toLong()
-                var assetIndex = 0
-                parsed.stations.flatMap { it.media }.forEach { media ->
+                parsed.stations.flatMap { it.media }.forEachIndexed { assetIndex, media ->
                     val target = File(stagingDirectory, "asset-$assetIndex.tmp")
-                    assetIndex++
                     val digest = MessageDigest.getInstance("SHA-256")
-                    var copied = 0L
-                    zip.getInputStream(entriesByName.getValue(media.entryPath)).use { input ->
+                    val copied = zip.getInputStream(entriesByName.getValue(media.entryPath)).use { input ->
                         FileOutputStream(target).use { output ->
-                            copied = copyBounded(
+                            copyBounded(
                                 input = input,
                                 output = output,
                                 maxBytes = minOf(media.byteSize, GameArchiveLimits.MAX_ENTRY_BYTES),
@@ -80,11 +76,9 @@ class GameArchiveCodec {
                 parsed
             }
             return GameArchiveBundle(manifest, mediaFiles)
-        } catch (exception: UserMessageException) {
+        } catch (exception: Exception) {
             if (ownsStagingDirectory) stagingDirectory.deleteRecursively()
-            throw exception
-        } catch (_: Exception) {
-            if (ownsStagingDirectory) stagingDirectory.deleteRecursively()
+            if (exception is UserMessageException) throw exception
             throw UserMessageException(UserMessageKey.ARCHIVE_INVALID)
         }
     }
@@ -106,10 +100,9 @@ class GameArchiveCodec {
                     val file = bundle.mediaFiles[media.entryPath]?.takeIf(File::isFile) ?: mediaInvalid()
                     if (file.length() > GameArchiveLimits.MAX_ENTRY_BYTES) limitExceeded()
                     val digest = MessageDigest.getInstance("SHA-256")
-                    var copied = 0L
                     zip.putNextEntry(ZipEntry(media.entryPath))
-                    FileInputStream(file).use { input ->
-                        copied = copyBounded(
+                    val copied = FileInputStream(file).use { input ->
+                        copyBounded(
                             input = input,
                             output = zip,
                             maxBytes = minOf(media.byteSize, GameArchiveLimits.MAX_ENTRY_BYTES),
@@ -123,11 +116,9 @@ class GameArchiveCodec {
                 }
             }
             if (archiveFile.length() > GameArchiveLimits.MAX_ARCHIVE_BYTES) limitExceeded()
-        } catch (exception: UserMessageException) {
+        } catch (exception: Exception) {
             archiveFile.delete()
-            throw exception
-        } catch (_: Exception) {
-            archiveFile.delete()
+            if (exception is UserMessageException) throw exception
             throw UserMessageException(UserMessageKey.ARCHIVE_EXPORT_FAILED)
         }
     }

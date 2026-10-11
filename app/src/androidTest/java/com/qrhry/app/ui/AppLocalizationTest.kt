@@ -124,8 +124,8 @@ class AppLocalizationTest {
     fun gameCreationShowsBothScoringPoliciesInSlovakAndEnglish() {
         composeRule.onNodeWithText("Vytvoriť / Upraviť").performClick()
         composeRule.onAllNodesWithText("Ako sa udeľujú body za úlohy")[0].assertIsDisplayed()
-        composeRule.onNodeWithText("Za správnu odpoveď, aj po opakovaní").assertIsDisplayed()
-        composeRule.onNodeWithText("Iba za správnu odpoveď na prvý pokus").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Za správnu odpoveď, aj po opakovaní")[0].assertIsDisplayed()
+        composeRule.onAllNodesWithText("Iba za správnu odpoveď na prvý pokus")[0].assertIsDisplayed()
 
         composeRule.onNodeWithText("Domov").performClick()
         composeRule.onNodeWithText("Nastavenia").performClick()
@@ -134,9 +134,9 @@ class AppLocalizationTest {
         composeRule.onNodeWithText("Back").performClick()
         composeRule.onNodeWithText("Create / Edit").performClick()
 
-        composeRule.onNodeWithText("How question points are awarded").assertIsDisplayed()
-        composeRule.onNodeWithText("Award points for a correct answer, including retries").assertIsDisplayed()
-        composeRule.onNodeWithText("Award points only when the first answer is correct").assertIsDisplayed()
+        composeRule.onAllNodesWithText("How question points are awarded")[0].assertIsDisplayed()
+        composeRule.onAllNodesWithText("Award points for a correct answer, including retries")[0].assertIsDisplayed()
+        composeRule.onAllNodesWithText("Award points only when the first answer is correct")[0].assertIsDisplayed()
     }
 
     @Test

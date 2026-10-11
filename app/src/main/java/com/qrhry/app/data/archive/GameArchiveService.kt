@@ -37,11 +37,9 @@ class GameArchiveService(
             contentResolver.openOutputStream(target, "w")?.use { output ->
                 FileInputStream(temporaryArchive).use { input -> copyLimited(input, output, GameArchiveLimits.MAX_ARCHIVE_BYTES) }
             } ?: throw UserMessageException(UserMessageKey.ARCHIVE_EXPORT_FAILED)
-        } catch (exception: UserMessageException) {
+        } catch (exception: Exception) {
             runCatching { DocumentsContract.deleteDocument(contentResolver, target) }
-            throw exception
-        } catch (_: Exception) {
-            runCatching { DocumentsContract.deleteDocument(contentResolver, target) }
+            if (exception is UserMessageException) throw exception
             throw UserMessageException(UserMessageKey.ARCHIVE_EXPORT_FAILED)
         } finally {
             temporaryArchive.delete()
@@ -99,11 +97,9 @@ class GameArchiveService(
                 ),
                 archiveFile
             )
-        } catch (exception: UserMessageException) {
+        } catch (exception: Exception) {
             archiveFile.delete()
-            throw exception
-        } catch (_: Exception) {
-            archiveFile.delete()
+            if (exception is UserMessageException) throw exception
             throw UserMessageException(UserMessageKey.ARCHIVE_EXPORT_FAILED)
         }
     }
@@ -131,15 +127,12 @@ class GameArchiveService(
                 taskCount = bundle.manifest.stations.sumOf { it.tasks.size },
                 mediaCount = bundle.manifest.stations.sumOf { it.media.size }
             )
-            stagedImports[token] = StagedImport(archiveFile, stagingDirectory, bundle, preview)
+            stagedImports[token] = StagedImport(archiveFile, stagingDirectory, bundle)
             return preview
-        } catch (exception: UserMessageException) {
+        } catch (exception: Exception) {
             archiveFile.delete()
             stagingDirectory.deleteRecursively()
-            throw exception
-        } catch (_: Exception) {
-            archiveFile.delete()
-            stagingDirectory.deleteRecursively()
+            if (exception is UserMessageException) throw exception
             throw UserMessageException(UserMessageKey.ARCHIVE_INVALID)
         }
     }
@@ -160,11 +153,9 @@ class GameArchiveService(
             assetStore.promoteArchiveAssets(stagedAssets)
             val draft = stagedImport.bundle.manifest.toGameDraft()
             return repository.importGame(draft, gameUuid, stagedAssets.mediaByStation)
-        } catch (exception: UserMessageException) {
+        } catch (exception: Exception) {
             stagedAssets?.let(assetStore::discardArchiveAssets)
-            throw exception
-        } catch (_: Exception) {
-            stagedAssets?.let(assetStore::discardArchiveAssets)
+            if (exception is UserMessageException) throw exception
             throw UserMessageException(UserMessageKey.ARCHIVE_IMPORT_FAILED)
         } finally {
             stagedImport.cleanup()
@@ -234,8 +225,7 @@ class GameArchiveService(
     private data class StagedImport(
         val archiveFile: File,
         val stagingDirectory: File,
-        val bundle: GameArchiveBundle,
-        val preview: GameArchiveImportPreview
+        val bundle: GameArchiveBundle
     ) {
         fun cleanup() {
             archiveFile.delete()
