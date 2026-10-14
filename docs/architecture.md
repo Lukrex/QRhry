@@ -9,11 +9,12 @@ flow is:
 
 - `domain` contains game, station, typed task, option, visit, attempt,
   drafts, and validation models without Android or database dependencies.
-- `data.local.GameDatabaseHelper` owns schema version 8, foreign keys, indexes,
+- `data.local.GameDatabaseHelper` owns schema version 9, foreign keys, indexes,
   and sequential, non-destructive migrations.
 - `data.GameRepository` owns parameterized reads and transactional writes for
-  game/station/task content, session progression, and scoring. It validates QR
-  order, session/game/task ownership, answer submissions, and completion.
+  game/station/task/route content, session progression, and scoring. It validates
+  QR order, session/game/task ownership, answer submissions, route graphs, and
+  completion.
 - `data.archive.GameArchiveService` coordinates SAF import/export, while
   `GameArchiveCodec` owns the versioned ZIP/JSON format and bounded validation.
   `GameRepository` supplies consistent relational snapshots and transactional
@@ -30,10 +31,10 @@ flow is:
 
 ## Task and session lifecycle
 
-Task content is relational and ordered: a station has zero or more tasks; the
-first supported task type is `MULTIPLE_CHOICE`, with ordered options. Tasks and
-options have stable UUIDs. The editor initially exposes no task or one task per
-station, while the model and tables support multiple ordered tasks.
+Task content is relational and ordered: a station has zero or more tasks with
+multiple-choice, true/false, or short-text data. Tasks and options have stable
+UUIDs. The editor initially exposes no task or one task per station, while the
+model and tables support multiple ordered tasks.
 
 Keep these states distinct:
 
@@ -52,13 +53,20 @@ Keep these states distinct:
   station completes on scan; otherwise all its tasks need a correct attempt.
 
 The repository resumes an incomplete visited station and accepts no later
-station until it is complete. A station completes when every task is solved or
-explicitly finalized after a wrong answer. Linear `stations.position`
-determines order; no `next_station_id` or branching rule is stored. Session
-progress and pending answer selection are reconstructed from SQLite after
-restart. Incorrect answers remain retryable until the player continues. New
-sessions snapshot scoring mode and task/station totals at start. Completed runs
-can be reopened from Play without starting another session. V5 attempts migrate
+station until it is complete. Linear `stations.position` remains the default
+and is preserved for existing games. Optional branched games store an explicit
+start and fixed `CORRECT`, `INCORRECT`, or `INFO` transitions. The route graph
+must be complete, reachable, and acyclic. A branched task station has exactly
+one task so its result is unambiguous. The session stores its expected station;
+the answer decision, station completion, and next destination are committed in
+one transaction. A correct answer selects the correct edge even when the
+first-try scoring policy awards no points. A wrong answer selects its edge only
+after the player explicitly continues. Information stations follow their
+single edge on scan. Session progress and pending answer selection are
+reconstructed from SQLite after restart. Incorrect answers remain retryable
+until the player continues. New sessions snapshot scoring mode and task/station
+totals at start; branched result totals are finalized from the visited route.
+Completed runs can be reopened from Play without starting another session. V5 attempts migrate
 with zero awarded points, and completed legacy sessions display their score and
 historical totals as unavailable because scoring was not recorded for those
 runs.
@@ -71,13 +79,12 @@ active and completed runs keep their session snapshot. Attempt rows snapshot the
 prompt, selected answer text, correctness, awarded points, finalization state,
 and timestamps; selected option IDs are not foreign keys, so option changes do
 not erase historical answers. A task with attempts is not deleted. No timers,
-hints, achievements, networking, additional task types, or branching are
-implemented. Future task types should use typed relational data rather than
+hints, achievements, or networking are implemented. Future task types should use typed relational data rather than
 nullable columns on `stations` or opaque JSON.
 
 ## Portable game archives
 
-The `.qrhry` v2 format is a content-only ZIP with a JSON manifest and generated
+The `.qrhry` v3 format is a content-only ZIP with a JSON manifest and generated
 asset aliases. It excludes sessions, visits, attempts, and results. Import
 creates fresh local identities, including new station QR tokens, so it creates a
 new QR set rather than reusing a source game's printed codes. Archive parsing
@@ -86,4 +93,4 @@ verified before a repository transaction inserts the game. The archive format,
 limits, and failure compensation are specified in `game-archive-format.md`;
 startup recovery removes staging/orphan directories older than 24 hours, so a
 recent in-progress import is not mistaken for abandoned work. SQLite remains at
-schema v7.
+schema v9. The current app imports v1/v2 archives as linear games.

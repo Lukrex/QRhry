@@ -204,4 +204,25 @@
     <string name="error_games_load">Saved games could not be loaded.</string>
     <string name="error_session_start">The game session could not be started.</string>
     <string name="error_scanner_lookup">The scanner or station lookup failed. Try again.</string>
+    <string name="edit_game_route">Edit game route</string>
+    <string name="route_heading">Game route</string>
+    <string name="route_mode">Progression</string>
+    <string name="route_linear">In station order</string>
+    <string name="route_branched">Branch by answer</string>
+    <string name="route_start">Starting station</string>
+    <string name="route_correct">After a correct answer</string>
+    <string name="route_incorrect">After an incorrect answer</string>
+    <string name="route_information">After information</string>
+    <string name="route_end">End game</string>
+    <string name="route_save">Save route</string>
+    <string name="route_saved">Route saved.</string>
+    <string name="route_next_scan">Next, scan: %1$s</string>
+    <string name="error_route_start">Choose a starting station.</string>
+    <string name="error_route_transition_missing">Choose a destination or end the game for every possible result.</string>
+    <string name="error_route_transition_invalid">This route contains an invalid or duplicate transition.</string>
+    <string name="error_route_station_invalid">A route refers to a station that is unavailable.</string>
+    <string name="error_route_unreachable">Every station must be reachable from the starting station.</string>
+    <string name="error_route_cycle">Routes cannot loop back to an earlier station.</string>
+    <string name="error_route_multiple_tasks">A branched station can contain only one task in this version.</string>
+    <string name="error_route_active_session">Finish the active game before changing its route.</string>
 </resources>

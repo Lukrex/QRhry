@@ -10,6 +10,8 @@ import com.qrhry.app.data.local.GameAssetStore
 import com.qrhry.app.data.local.GameDatabaseHelper
 import com.qrhry.app.data.local.ImportedAsset
 import com.qrhry.app.domain.GameDraft
+import com.qrhry.app.domain.GameProgressionMode
+import com.qrhry.app.domain.GameRouteDraft
 import com.qrhry.app.domain.MultipleChoiceTask
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
 import com.qrhry.app.domain.TrueFalseTaskDraft
@@ -21,6 +23,8 @@ import com.qrhry.app.domain.StationDraft
 import com.qrhry.app.domain.StationMediaType
 import com.qrhry.app.domain.TaskOptionDraft
 import com.qrhry.app.domain.TaskScoringMode
+import com.qrhry.app.domain.RouteCondition
+import com.qrhry.app.domain.RouteTransitionDraft
 import com.qrhry.app.domain.UserMessageException
 import com.qrhry.app.domain.UserMessageKey
 import com.qrhry.app.qr.QrPayloadParseResult
@@ -195,6 +199,45 @@ class GameArchiveTest {
     }
 
     @Test
+    fun versionThreeRoundTripRemapsBranchedStationReferencesAndCanBePlayed() {
+        val task = taskDraft()
+        val original = repository.createGame(GameDraft(
+            "Branched trail",
+            listOf(StationDraft("Question", "", listOf(task)), StationDraft("Information", "Read this"))
+        ))
+        gameUuids += original.gameUuid
+        repository.updateGameRoute(original.id, GameRouteDraft(
+            GameProgressionMode.BRANCHED,
+            0,
+            listOf(
+                RouteTransitionDraft(0, RouteCondition.CORRECT, 1),
+                RouteTransitionDraft(0, RouteCondition.INCORRECT, 1),
+                RouteTransitionDraft(1, RouteCondition.INFO, null)
+            )
+        ))
+        archiveService.exportGameToFile(original.id, archiveFile)
+        val imported = archiveService.confirmImport(archiveService.inspectImport(Uri.fromFile(archiveFile)).token)
+        gameUuids += imported.gameUuid
+        assertEquals(GameProgressionMode.BRANCHED, imported.route.mode)
+        assertEquals(imported.stations.first().id, imported.route.startStationId)
+        assertTrue(imported.route.transitions.all { edge ->
+            imported.stations.any { it.id == edge.sourceStationId } &&
+                (edge.targetStationId == null || imported.stations.any { it.id == edge.targetStationId })
+        })
+
+        val session = repository.startOrResumeSession(imported.id)
+        repository.recordStationScan(session.session.id, imported.stations.first().qrToken)
+        val importedTask = imported.stations.first().tasks.single()
+        val option = (importedTask as MultipleChoiceTask).options.first { it.isCorrect }
+        repository.savePendingTaskAnswer(session.session.id, importedTask.id, TaskAnswer.Option(option.id))
+        val answer = repository.submitTaskAttempt(session.session.id, importedTask.id) as TaskSubmissionResult.Submitted
+        assertTrue(answer.isCorrect)
+        assertEquals(imported.stations[1].id, answer.progress.nextStation?.id)
+        val complete = repository.recordStationScan(session.session.id, imported.stations[1].qrToken) as StationScanResult.Accepted
+        assertEquals(com.qrhry.app.domain.GameSessionStatus.COMPLETED, complete.progress.session.status)
+    }
+
+    @Test
     fun versionOneArchiveStillImportsTasksAsMultipleChoice() {
         val old = File(context.cacheDir, "qrhry-v1-${UUID.randomUUID()}.qrhry")
         val firstTask = JSONObject().put("prompt", "Legacy prompt").put("position", 0).put("points", 7)
@@ -215,6 +258,30 @@ class GameArchiveTest {
             gameUuids += imported.gameUuid
             assertTrue(imported.stations.first().tasks.single() is MultipleChoiceTask)
             assertEquals("Legacy prompt", imported.stations.first().tasks.single().prompt)
+        } finally {
+            old.delete()
+        }
+    }
+
+    @Test
+    fun versionTwoArchiveImportsAsLinearGame() {
+        val old = File(context.cacheDir, "qrhry-v2-${UUID.randomUUID()}.qrhry")
+        val task = JSONObject().put("prompt", "Legacy typed task").put("position", 0)
+            .put("points", 5).put("type", "TRUE_FALSE").put("correctAnswer", true)
+        val stations = JSONArray()
+            .put(JSONObject().put("title", "One").put("bodyText", "").put("position", 0)
+                .put("media", JSONArray()).put("tasks", JSONArray().put(task)))
+            .put(JSONObject().put("title", "Two").put("bodyText", "").put("position", 1)
+                .put("media", JSONArray()).put("tasks", JSONArray()))
+        val manifest = JSONObject().put("format", "qrhry").put("formatVersion", 2).put("title", "Legacy v2")
+            .put("scoringMode", "EVENTUAL_CORRECT").put("stations", stations).toString()
+        writeZip(old, listOf(GameArchiveCodec.MANIFEST_ENTRY to manifest.toByteArray()))
+        try {
+            val imported = archiveService.confirmImport(archiveService.inspectImport(Uri.fromFile(old)).token)
+            gameUuids += imported.gameUuid
+            assertEquals("Legacy v2", imported.title)
+            assertEquals(com.qrhry.app.domain.GameProgressionMode.LINEAR, imported.route.mode)
+            assertEquals("TRUE_FALSE", imported.stations.first().tasks.single().type.name)
         } finally {
             old.delete()
         }
@@ -419,12 +486,14 @@ class GameArchiveTest {
             .put("title", "First")
             .put("bodyText", "Text")
             .put("position", 0)
+            .put("stationKey", UUID.randomUUID().toString())
             .put("media", JSONArray().put(media))
             .put("tasks", JSONArray())
         val secondStation = JSONObject()
             .put("title", "Second")
             .put("bodyText", "Text")
             .put("position", 1)
+            .put("stationKey", UUID.randomUUID().toString())
             .put("media", JSONArray())
             .put("tasks", JSONArray())
         return JSONObject()
@@ -432,6 +501,9 @@ class GameArchiveTest {
             .put("formatVersion", GameArchiveLimits.CURRENT_FORMAT_VERSION)
             .put("title", "Manifest test")
             .put("scoringMode", TaskScoringMode.EVENTUAL_CORRECT.name)
+            .put("progressionMode", "LINEAR")
+            .put("startStationKey", JSONObject.NULL)
+            .put("transitions", JSONArray())
             .put("stations", JSONArray().put(firstStation).put(secondStation))
             .toString()
     }

@@ -5,6 +5,11 @@ import com.qrhry.app.domain.StationTaskType
 import com.qrhry.app.domain.TaskScoringMode
 import com.qrhry.app.domain.UserMessageException
 import com.qrhry.app.domain.UserMessageKey
+import com.qrhry.app.domain.GameProgressionMode
+import com.qrhry.app.domain.GameRouteDraft
+import com.qrhry.app.domain.GameRouteValidator
+import com.qrhry.app.domain.RouteCondition
+import com.qrhry.app.domain.RouteTransitionDraft
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedOutputStream
@@ -129,18 +134,25 @@ class GameArchiveCodec {
 
     private fun parseManifest(json: String): GameArchiveManifest {
         validateJsonNesting(json)
-        val root = JSONObject(json).requireKeys("format", "formatVersion", "title", "scoringMode", "stations")
-        if (root.requiredString("format") != FORMAT_NAME) invalidArchive()
-        val version = root.requiredInt("formatVersion")
+        val rawRoot = JSONObject(json)
+        val version = rawRoot.requiredInt("formatVersion")
         if (version !in 1..GameArchiveLimits.CURRENT_FORMAT_VERSION) {
             throw UserMessageException(UserMessageKey.ARCHIVE_VERSION_UNSUPPORTED)
         }
+        val root = rawRoot.requireKeys(*(
+            if (version >= 3) setOf("format", "formatVersion", "title", "scoringMode", "stations", "progressionMode", "startStationKey", "transitions")
+            else setOf("format", "formatVersion", "title", "scoringMode", "stations")
+        ).toTypedArray())
+        if (root.requiredString("format") != FORMAT_NAME) invalidArchive()
         val manifest = GameArchiveManifest(
             formatVersion = version,
             title = root.requiredString("title"),
             scoringMode = root.requiredEnum("scoringMode", TaskScoringMode.entries.toTypedArray()),
             stations = root.requiredArray("stations", GameArchiveLimits.MAX_STATIONS).mapIndexed { index, value ->
-                val station = (value as? JSONObject)?.requireKeys("title", "bodyText", "position", "media", "tasks")
+                val station = (value as? JSONObject)?.requireKeys(*(
+                    if (version >= 3) setOf("title", "bodyText", "position", "media", "tasks", "stationKey")
+                    else setOf("title", "bodyText", "position", "media", "tasks")
+                ).toTypedArray())
                     ?: invalidArchive()
                 GameArchiveStation(
                     title = station.requiredString("title"),
@@ -194,9 +206,20 @@ class GameArchiveCodec {
                             correctBoolean = answer as? Boolean,
                             correctText = answer as? String
                         )
-                    }
+                    },
+                    stationKey = if (version >= 3) station.requiredString("stationKey") else ""
                 ).also { if (it.position != index) invalidArchive() }
-            }
+            },
+            progressionMode = if (version >= 3) root.requiredEnum("progressionMode", GameProgressionMode.entries.toTypedArray()) else GameProgressionMode.LINEAR,
+            startStationKey = if (version >= 3 && !root.isNull("startStationKey")) root.requiredString("startStationKey") else null,
+            transitions = if (version >= 3) root.requiredArray("transitions", GameArchiveLimits.MAX_STATIONS * 2).map { value ->
+                val transition = (value as? JSONObject)?.requireKeys("sourceStationKey", "condition", "targetStationKey") ?: invalidArchive()
+                GameArchiveTransition(
+                    transition.requiredString("sourceStationKey"),
+                    transition.requiredEnum("condition", RouteCondition.entries.toTypedArray()),
+                    if (transition.isNull("targetStationKey")) null else transition.requiredString("targetStationKey")
+                )
+            } else emptyList()
         )
         validateManifest(manifest)
         return manifest
@@ -208,6 +231,26 @@ class GameArchiveCodec {
         }
         if (manifest.title.isBlank() || manifest.title.length > MAX_TEXT_LENGTH) invalidArchive()
         if (manifest.stations.size !in 2..GameArchiveLimits.MAX_STATIONS) limitExceeded()
+        if (manifest.formatVersion >= 3) {
+            val stationKeys = manifest.stations.map { it.stationKey }
+            if (stationKeys.any { !isCanonicalUuid(it) } || stationKeys.size != stationKeys.toSet().size) invalidArchive()
+            if (manifest.progressionMode == GameProgressionMode.LINEAR) {
+                if (manifest.startStationKey != null || manifest.transitions.isNotEmpty()) invalidArchive()
+            } else {
+                val indexes = stationKeys.withIndex().associate { it.value to it.index }
+                val startPosition = manifest.startStationKey?.let(indexes::get) ?: invalidArchive()
+                if (manifest.transitions.any { it.sourceStationKey !in indexes || (it.targetStationKey != null && it.targetStationKey !in indexes) }) invalidArchive()
+                val route = GameRouteDraft(
+                    GameProgressionMode.BRANCHED,
+                    startPosition,
+                    manifest.transitions.map { RouteTransitionDraft(indexes.getValue(it.sourceStationKey), it.condition, it.targetStationKey?.let(indexes::getValue)) }
+                )
+                val validation = GameRouteValidator.validationError(
+                    manifest.stations.map { GameRouteValidator.Node(it.position, it.tasks.size) }, route
+                )
+                if (validation != null) invalidArchive()
+            }
+        }
         var taskCount = 0
         val mediaPaths = mutableSetOf<String>()
         manifest.stations.forEachIndexed { stationIndex, station ->
@@ -257,6 +300,18 @@ class GameArchiveCodec {
             .put("formatVersion", manifest.formatVersion)
             .put("title", manifest.title)
             .put("scoringMode", manifest.scoringMode.name)
+        if (manifest.formatVersion >= 3) {
+            root.put("progressionMode", manifest.progressionMode.name)
+                .put("startStationKey", manifest.startStationKey ?: JSONObject.NULL)
+            val transitions = JSONArray()
+            manifest.transitions.forEach { transition ->
+                transitions.put(JSONObject()
+                    .put("sourceStationKey", transition.sourceStationKey)
+                    .put("condition", transition.condition.name)
+                    .put("targetStationKey", transition.targetStationKey ?: JSONObject.NULL))
+            }
+            root.put("transitions", transitions)
+        }
         val stations = JSONArray()
         manifest.stations.forEach { station ->
             val media = JSONArray()
@@ -301,6 +356,7 @@ class GameArchiveCodec {
                     .put("position", station.position)
                     .put("media", media)
                     .put("tasks", tasks)
+                    .also { if (manifest.formatVersion >= 3) it.put("stationKey", station.stationKey) }
             )
         }
         return root.put("stations", stations).toString()
@@ -311,6 +367,10 @@ class GameArchiveCodec {
         if (actual != expected.toSet()) invalidArchive()
         return this
     }
+
+    private fun isCanonicalUuid(value: String): Boolean = runCatching {
+        java.util.UUID.fromString(value).toString() == value
+    }.getOrDefault(false)
 
     private fun JSONObject.requiredString(key: String): String =
         (get(key) as? String)?.takeIf { it.length <= MAX_TEXT_LENGTH } ?: invalidArchive()

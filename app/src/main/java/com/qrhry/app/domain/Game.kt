@@ -7,7 +7,37 @@ data class Game(
     val gameUuid: String = "",
     val contentVersion: Int = 1,
     val updatedAt: Long = 0L,
-    val scoringMode: TaskScoringMode = TaskScoringMode.EVENTUAL_CORRECT
+    val scoringMode: TaskScoringMode = TaskScoringMode.EVENTUAL_CORRECT,
+    val route: GameRoute = GameRoute()
+)
+
+enum class GameProgressionMode { LINEAR, BRANCHED }
+enum class RouteCondition { CORRECT, INCORRECT, INFO }
+
+data class RouteTransition(
+    val sourceStationId: Long,
+    val condition: RouteCondition,
+    /** A null destination is an explicit end of the game. */
+    val targetStationId: Long?
+)
+
+data class GameRoute(
+    val mode: GameProgressionMode = GameProgressionMode.LINEAR,
+    val startStationId: Long? = null,
+    val transitions: List<RouteTransition> = emptyList()
+)
+
+/** Route editor/archive draft addresses stations by their stable position within the game. */
+data class GameRouteDraft(
+    val mode: GameProgressionMode,
+    val startStationPosition: Int?,
+    val transitions: List<RouteTransitionDraft>
+)
+
+data class RouteTransitionDraft(
+    val sourceStationPosition: Int,
+    val condition: RouteCondition,
+    val targetStationPosition: Int?
 )
 
 enum class TaskScoringMode {
@@ -227,7 +257,8 @@ data class GameSession(
     val createdAt: Long,
     val updatedAt: Long,
     val completedAt: Long?,
-    val scoringMode: TaskScoringMode = TaskScoringMode.EVENTUAL_CORRECT
+    val scoringMode: TaskScoringMode = TaskScoringMode.EVENTUAL_CORRECT,
+    val expectedStationId: Long? = null
 )
 
 data class CompletedSessionResult(
@@ -255,7 +286,8 @@ data class SessionProgress(
     val score: Long = 0L,
     val completedTaskCount: Int = 0,
     val resultTotalTaskCount: Int? = null,
-    val resultTotalStationCount: Int? = null
+    val resultTotalStationCount: Int? = null,
+    val routeMode: GameProgressionMode = GameProgressionMode.LINEAR
 ) {
     val completedStationCount: Int
         get() = completedStationIds.size

@@ -64,4 +64,42 @@ class GameDraftValidatorTest {
         assertEquals(false, ShortAnswerEvaluator.matches("café", "cafe"))
         assertEquals(true, ShortAnswerEvaluator.matches("ŽILINA", "  žilina  "))
     }
+
+    @Test
+    fun acceptsBranchedRoutesWithConvergenceAndExplicitEnds() {
+        val route = GameRouteDraft(
+            GameProgressionMode.BRANCHED,
+            0,
+            listOf(
+                RouteTransitionDraft(0, RouteCondition.CORRECT, 1),
+                RouteTransitionDraft(0, RouteCondition.INCORRECT, 1),
+                RouteTransitionDraft(1, RouteCondition.INFO, null)
+            )
+        )
+        assertNull(GameRouteValidator.validationError(listOf(
+            GameRouteValidator.Node(0, 1), GameRouteValidator.Node(1, 0)
+        ), route))
+    }
+
+    @Test
+    fun rejectsIncompleteUnreachableAndCyclicRoutes() {
+        val nodes = listOf(GameRouteValidator.Node(0, 1), GameRouteValidator.Node(1, 0))
+        val missing = GameRouteDraft(GameProgressionMode.BRANCHED, 0, listOf(
+            RouteTransitionDraft(0, RouteCondition.CORRECT, 1),
+            RouteTransitionDraft(1, RouteCondition.INFO, null)
+        ))
+        assertEquals(UserMessageKey.ROUTE_TRANSITION_MISSING, GameRouteValidator.validationError(nodes, missing))
+        val cycle = GameRouteDraft(GameProgressionMode.BRANCHED, 0, listOf(
+            RouteTransitionDraft(0, RouteCondition.CORRECT, 1),
+            RouteTransitionDraft(0, RouteCondition.INCORRECT, 1),
+            RouteTransitionDraft(1, RouteCondition.INFO, 0)
+        ))
+        assertEquals(UserMessageKey.ROUTE_CYCLE, GameRouteValidator.validationError(nodes, cycle))
+        val unreachable = GameRouteDraft(GameProgressionMode.BRANCHED, 0, listOf(
+            RouteTransitionDraft(0, RouteCondition.CORRECT, null),
+            RouteTransitionDraft(0, RouteCondition.INCORRECT, null),
+            RouteTransitionDraft(1, RouteCondition.INFO, null)
+        ))
+        assertEquals(UserMessageKey.ROUTE_UNREACHABLE_STATION, GameRouteValidator.validationError(nodes, unreachable))
+    }
 }

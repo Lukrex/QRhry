@@ -98,6 +98,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import com.qrhry.app.domain.Game
+import com.qrhry.app.domain.GameProgressionMode
+import com.qrhry.app.domain.GameRouteDraft
+import com.qrhry.app.domain.RouteCondition
+import com.qrhry.app.domain.RouteTransitionDraft
 import com.qrhry.app.domain.GameSessionStatus
 import com.qrhry.app.domain.SessionProgress
 import com.qrhry.app.domain.StationScanResult
@@ -339,10 +343,10 @@ fun GameScreen(
         viewModel.navigateBack()
     }
 
-    val routeKey = if (state.route == GameScreenRoute.EDIT_STATION) {
-        "${state.route.name}:${state.editingStation?.id}"
-    } else {
-        state.route.name
+    val routeKey = when (state.route) {
+        GameScreenRoute.EDIT_STATION -> "${state.route.name}:${state.editingStation?.id}"
+        GameScreenRoute.EDIT_ROUTE -> "${state.route.name}:${state.routeEditingGame?.id}"
+        else -> state.route.name
     }
     AnimatedContent(
         targetState = routeKey,
@@ -396,6 +400,15 @@ fun GameScreen(
                 onCancel = viewModel::cancelStationEdit
             )
         }
+        GameScreenRoute.EDIT_ROUTE -> state.routeEditingGame?.let { game ->
+            GameRouteEditorScreen(
+                game = game,
+                isSaving = state.isSavingRoute,
+                error = state.error,
+                onSave = { viewModel.saveGameRoute(game.id, it) },
+                onCancel = viewModel::cancelGameRouteEdit
+            )
+        }
         GameScreenRoute.PLAY_LIST -> PlayListScreen(state, viewModel)
         GameScreenRoute.PLAY_SESSION -> state.sessionProgress?.let { progress ->
             PlaySessionScreen(
@@ -431,6 +444,7 @@ private fun isForwardRouteTransition(from: GameScreenRoute, to: GameScreenRoute)
     GameScreenRoute.HOME to GameScreenRoute.CREATE,
     GameScreenRoute.HOME to GameScreenRoute.PLAY_LIST,
     GameScreenRoute.CREATE to GameScreenRoute.EDIT_STATION,
+    GameScreenRoute.CREATE to GameScreenRoute.EDIT_ROUTE,
     GameScreenRoute.PLAY_LIST to GameScreenRoute.PLAY_SESSION,
     GameScreenRoute.PLAY_SESSION to GameScreenRoute.SCANNER,
     GameScreenRoute.SCANNER to GameScreenRoute.PLAY_SESSION,
@@ -788,6 +802,14 @@ private fun userMessageText(key: UserMessageKey): String = stringResource(
         UserMessageKey.ARCHIVE_MEDIA_INVALID -> R.string.error_archive_media
         UserMessageKey.ARCHIVE_EXPORT_FAILED -> R.string.error_archive_export
         UserMessageKey.ARCHIVE_IMPORT_FAILED -> R.string.error_archive_import
+        UserMessageKey.ROUTE_START_REQUIRED -> R.string.error_route_start
+        UserMessageKey.ROUTE_TRANSITION_MISSING -> R.string.error_route_transition_missing
+        UserMessageKey.ROUTE_TRANSITION_INVALID -> R.string.error_route_transition_invalid
+        UserMessageKey.ROUTE_STATION_INVALID -> R.string.error_route_station_invalid
+        UserMessageKey.ROUTE_UNREACHABLE_STATION -> R.string.error_route_unreachable
+        UserMessageKey.ROUTE_CYCLE -> R.string.error_route_cycle
+        UserMessageKey.ROUTE_MULTIPLE_TASKS -> R.string.error_route_multiple_tasks
+        UserMessageKey.ROUTE_ACTIVE_SESSION -> R.string.error_route_active_session
     }
 )
 
@@ -1019,6 +1041,7 @@ private fun GameLibraryScreen(
                     SavedGame(
                         game,
                         onEditStation = viewModel::editStation,
+                        onEditRoute = viewModel::editGameRoute,
                         onScoringModeChange = viewModel::updateGameScoringMode,
                         onExport = onExportGame,
                         isExporting = state.isProcessingArchive
@@ -1316,6 +1339,9 @@ private fun PlaySessionScreen(
                 progress.nextStation?.let { next ->
                     Text(stringResource(R.string.next_station), style = MaterialTheme.typography.titleMedium)
                     Text(next.title, style = MaterialTheme.typography.headlineSmall)
+                    if (progress.routeMode == GameProgressionMode.BRANCHED) {
+                        Text(stringResource(R.string.route_next_scan, next.title))
+                    }
                     Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
                         IconLabel(QRhryIconKind.SCAN, stringResource(R.string.scan_station))
                     }
@@ -1337,9 +1363,170 @@ private fun PlaySessionScreen(
 }
 
 @Composable
+private fun GameRouteEditorScreen(
+    game: Game,
+    isSaving: Boolean,
+    error: UserMessageKey?,
+    onSave: (GameRouteDraft) -> Unit,
+    onCancel: () -> Unit
+) {
+    val positions = game.stations.associate { it.id to it.position }
+    var modeName by rememberSaveable(game.id) { mutableStateOf(game.route.mode.name) }
+    var start by rememberSaveable(game.id) {
+        mutableStateOf(game.route.startStationId?.let { positions[it] } ?: 0)
+    }
+    fun defaultTransitions(): List<RouteTransitionDraft> = game.stations.flatMapIndexed { index, station ->
+        val conditions = if (station.tasks.isEmpty()) listOf(RouteCondition.INFO)
+        else listOf(RouteCondition.CORRECT, RouteCondition.INCORRECT)
+        conditions.map { condition ->
+            RouteTransitionDraft(index, condition, if (index < game.stations.lastIndex) index + 1 else null)
+        }
+    }
+    fun encodeTransition(transition: RouteTransitionDraft) =
+        "${transition.sourceStationPosition}|${transition.condition.name}|${transition.targetStationPosition ?: "END"}"
+    fun decodeTransition(value: String): RouteTransitionDraft {
+        val parts = value.split('|')
+        return RouteTransitionDraft(
+            parts[0].toInt(), RouteCondition.valueOf(parts[1]), parts[2].takeUnless { it == "END" }?.toInt()
+        )
+    }
+    var transitionTokens by rememberSaveable(game.id) {
+        val initial = if (game.route.mode == GameProgressionMode.BRANCHED) {
+            game.route.transitions.map { edge ->
+                RouteTransitionDraft(positions[edge.sourceStationId] ?: -1, edge.condition, edge.targetStationId?.let(positions::get))
+            }
+        } else defaultTransitions()
+        mutableStateOf(initial.map(::encodeTransition))
+    }
+    val transitions = transitionTokens.map(::decodeTransition)
+    val mode = runCatching { GameProgressionMode.valueOf(modeName) }.getOrDefault(GameProgressionMode.LINEAR)
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(stringResource(R.string.route_heading), style = MaterialTheme.typography.headlineSmall)
+        Text(game.title, style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.route_mode), style = MaterialTheme.typography.titleSmall)
+        listOf(
+            GameProgressionMode.LINEAR to R.string.route_linear,
+            GameProgressionMode.BRANCHED to R.string.route_branched
+        ).forEach { (item, label) ->
+            Row(
+                Modifier.fillMaxWidth().selectable(
+                    selected = mode == item,
+                    onClick = {
+                        if (item == GameProgressionMode.BRANCHED && transitions.isEmpty()) {
+                            transitionTokens = defaultTransitions().map(::encodeTransition)
+                        }
+                        modeName = item.name
+                    },
+                    role = Role.RadioButton
+                ),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(selected = mode == item, onClick = null, modifier = Modifier.padding(end = 8.dp))
+                Text(stringResource(label))
+            }
+        }
+        if (mode == GameProgressionMode.BRANCHED) {
+            StationPicker(
+                label = stringResource(R.string.route_start),
+                stations = game.stations,
+                selectedPosition = start,
+                allowEnd = false,
+                onSelect = { if (it != null) start = it }
+            )
+            game.stations.forEach { station ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(station.title, style = MaterialTheme.typography.titleMedium)
+                        val conditions = if (station.tasks.isEmpty()) listOf(RouteCondition.INFO)
+                        else listOf(RouteCondition.CORRECT, RouteCondition.INCORRECT)
+                        conditions.forEach { condition ->
+                            val label = stringResource(
+                                when (condition) {
+                                    RouteCondition.CORRECT -> R.string.route_correct
+                                    RouteCondition.INCORRECT -> R.string.route_incorrect
+                                    RouteCondition.INFO -> R.string.route_information
+                                }
+                            )
+                            val selected = transitions.firstOrNull {
+                                it.sourceStationPosition == station.position && it.condition == condition
+                            }?.targetStationPosition
+                            StationPicker(
+                                label = label,
+                                stations = game.stations,
+                                selectedPosition = selected,
+                                allowEnd = true,
+                                onSelect = { target ->
+                                    transitionTokens = (transitions.filterNot {
+                                        it.sourceStationPosition == station.position && it.condition == condition
+                                    } + RouteTransitionDraft(station.position, condition, target)).map(::encodeTransition)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        error?.let { StatusMessage(userMessageText(it), isError = true) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onCancel, enabled = !isSaving, modifier = Modifier.weight(1f)) {
+                IconLabel(QRhryIconKind.CLOSE, stringResource(R.string.cancel))
+            }
+            Button(
+                onClick = {
+                    onSave(
+                        if (mode == GameProgressionMode.LINEAR) GameRouteDraft(mode, null, emptyList())
+                        else GameRouteDraft(mode, start, transitions)
+                    )
+                },
+                enabled = !isSaving,
+                modifier = Modifier.weight(1f)
+            ) { Text(stringResource(R.string.route_save)) }
+        }
+    }
+}
+
+@Composable
+private fun StationPicker(
+    label: String,
+    stations: List<Station>,
+    selectedPosition: Int?,
+    allowEnd: Boolean,
+    onSelect: (Int?) -> Unit
+) {
+    var expanded by remember(label, stations.size) { mutableStateOf(false) }
+    val selectedName = if (selectedPosition == null) stringResource(R.string.route_end)
+    else stations.getOrNull(selectedPosition)?.title ?: stringResource(R.string.error_route_station_invalid)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        Box {
+            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                Text(selectedName, modifier = Modifier.weight(1f))
+                QRhryIcon(QRhryIconKind.DOWN, size = 18.dp)
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                if (allowEnd) DropdownMenuItem(
+                    text = { Text(stringResource(R.string.route_end)) },
+                    onClick = { onSelect(null); expanded = false }
+                )
+                stations.forEach { station ->
+                    DropdownMenuItem(
+                        text = { Text(station.title) },
+                        onClick = { onSelect(station.position); expanded = false }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SavedGame(
     game: Game,
     onEditStation: (com.qrhry.app.domain.Station) -> Unit,
+    onEditRoute: (Game) -> Unit,
     onScoringModeChange: (Long, TaskScoringMode) -> Unit,
     onExport: (Game) -> Unit,
     isExporting: Boolean
@@ -1354,6 +1541,9 @@ private fun SavedGame(
                 scoringMode = game.scoringMode,
                 onScoringModeChange = { onScoringModeChange(game.id, it) }
             )
+            OutlinedButton(onClick = { onEditRoute(game) }, modifier = Modifier.fillMaxWidth()) {
+                IconLabel(QRhryIconKind.EDIT, stringResource(R.string.edit_game_route))
+            }
             OutlinedButton(
                 onClick = { onExport(game) },
                 enabled = !isExporting,
@@ -1479,7 +1669,7 @@ private fun stationScanMessage(result: StationScanResult): String = when (result
         )
         result.progress.session.status == GameSessionStatus.COMPLETED ->
             stringResource(R.string.scan_game_finished, result.station.title)
-        else -> stringResource(R.string.scan_next_station, result.station.title)
+        else -> stringResource(R.string.scan_next_station, result.progress.nextStation?.title ?: result.station.title)
     }
     StationScanResult.UnknownQr -> stringResource(R.string.qr_unknown)
     is StationScanResult.WrongGame -> stringResource(R.string.scan_wrong_game, result.station.title)

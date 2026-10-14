@@ -6,6 +6,10 @@ import com.qrhry.app.data.local.GameDatabaseHelper
 import com.qrhry.app.domain.Game
 import com.qrhry.app.domain.GameDraft
 import com.qrhry.app.domain.GameDraftValidator
+import com.qrhry.app.domain.GameProgressionMode
+import com.qrhry.app.domain.GameRoute
+import com.qrhry.app.domain.GameRouteDraft
+import com.qrhry.app.domain.GameRouteValidator
 import com.qrhry.app.domain.MultipleChoiceTask
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
 import com.qrhry.app.domain.ShortTextTask
@@ -21,6 +25,8 @@ import com.qrhry.app.domain.GameSession
 import com.qrhry.app.domain.GameSessionStatus
 import com.qrhry.app.domain.CompletedSessionResult
 import com.qrhry.app.domain.TaskScoringMode
+import com.qrhry.app.domain.RouteCondition
+import com.qrhry.app.domain.RouteTransitionDraft
 import com.qrhry.app.domain.TaskOption
 import com.qrhry.app.domain.TaskOptionDraft
 import com.qrhry.app.domain.TaskAttempt
@@ -62,7 +68,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     gameUuid = gameCursor.getString(2),
                     contentVersion = gameCursor.getInt(3),
                     updatedAt = gameCursor.getLong(4),
-                    scoringMode = TaskScoringMode.valueOf(gameCursor.getString(5))
+                    scoringMode = TaskScoringMode.valueOf(gameCursor.getString(5)),
+                    route = getGameRoute(database, gameId)
                 )
             }
         }
@@ -87,7 +94,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     gameUuid = cursor.getString(2),
                     contentVersion = cursor.getInt(3),
                     updatedAt = cursor.getLong(4),
-                    scoringMode = TaskScoringMode.valueOf(cursor.getString(5))
+                    scoringMode = TaskScoringMode.valueOf(cursor.getString(5)),
+                    route = getGameRoute(database, gameId)
                 )
             }
             database.setTransactionSuccessful()
@@ -100,7 +108,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
     fun importGame(
         draft: GameDraft,
         gameUuid: String,
-        mediaByStation: List<List<StationMedia>>
+        mediaByStation: List<List<StationMedia>>,
+        route: GameRouteDraft? = null
     ): Game {
         GameDraftValidator.validationError(draft)?.let { throw UserMessageException(it) }
         if (!isCanonicalUuid(gameUuid) || mediaByStation.size != draft.stations.size) {
@@ -116,6 +125,11 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             ) throw UserMessageException(UserMessageKey.ARCHIVE_INVALID)
         }
 
+        route?.let {
+            GameRouteValidator.validationError(
+                draft.stations.mapIndexed { index, station -> GameRouteValidator.Node(index, station.tasks.size) }, it
+            )?.let { error -> throw UserMessageException(error) }
+        }
         val database = databaseHelper.writableDatabase
         database.beginTransaction()
         return try {
@@ -160,6 +174,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     tasks = stationDraft.tasks.map { it.toTask(stationId) }
                 )
             }
+            route?.let { saveGameRoute(database, gameId, it, importedStations) }
             val importedGame = Game(
                 id = gameId,
                 title = draft.title.trim(),
@@ -167,10 +182,38 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 gameUuid = gameUuid,
                 contentVersion = 1,
                 updatedAt = now,
-                scoringMode = draft.scoringMode
+                scoringMode = draft.scoringMode,
+                route = route?.let { routeDraftToModel(it, importedStations) } ?: GameRoute()
             )
             database.setTransactionSuccessful()
             importedGame
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    fun updateGameRoute(gameId: Long, route: GameRouteDraft): Boolean {
+        val database = databaseHelper.writableDatabase
+        database.beginTransaction()
+        try {
+            val stations = getStations(database, gameId)
+            if (stations.isEmpty()) throw UserMessageException(UserMessageKey.GAME_HAS_NO_STATIONS)
+            if (database.rawQuery(
+                    "SELECT 1 FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS' LIMIT 1",
+                    arrayOf(gameId.toString())
+                ).use { it.moveToFirst() }
+            ) throw UserMessageException(UserMessageKey.ROUTE_ACTIVE_SESSION)
+            val draftNodes = stations.map { GameRouteValidator.Node(it.position, it.tasks.size) }
+            GameRouteValidator.validationError(draftNodes, route)?.let { throw UserMessageException(it) }
+            if (route.mode == GameProgressionMode.BRANCHED) {
+                saveGameRoute(database, gameId, route, stations)
+            } else {
+                database.delete("station_transitions", "source_station_id IN (SELECT id FROM stations WHERE game_id = ?)", arrayOf(gameId.toString()))
+                database.delete("game_routes", "game_id = ?", arrayOf(gameId.toString()))
+            }
+            incrementContentVersion(database, gameId)
+            database.setTransactionSuccessful()
+            return true
         } finally {
             database.endTransaction()
         }
@@ -243,7 +286,16 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 "UPDATE stations SET title = ?, body_text = ? WHERE id = ?",
                 arrayOf(title.trim(), bodyText.trim(), stationId)
             )
-            if (tasks != null) replaceStationTasks(database, stationId, gameId, tasks)
+            if (tasks != null) {
+                if (getGameRoute(database, gameId).mode == GameProgressionMode.BRANCHED && tasks.size > 1) {
+                    throw UserMessageException(UserMessageKey.ROUTE_MULTIPLE_TASKS)
+                }
+                replaceStationTasks(database, stationId, gameId, tasks)
+                if (getGameRoute(database, gameId).mode == GameProgressionMode.BRANCHED) {
+                    reconcileStationRoute(database, stationId, tasks.isEmpty())
+                    validateStoredGameRoute(database, gameId)
+                }
+            }
             incrementContentVersion(database, gameId)
             database.setTransactionSuccessful()
             return previous
@@ -363,7 +415,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
     fun getActiveSessions(): List<GameSession> {
         val sessions = mutableListOf<GameSession>()
         databaseHelper.readableDatabase.rawQuery(
-            """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode
+            """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id
                 FROM game_sessions WHERE status = 'IN_PROGRESS' ORDER BY updated_at DESC""",
             null
         ).use { cursor ->
@@ -374,7 +426,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
 
     fun getActiveSession(gameId: Long): GameSession? =
         databaseHelper.readableDatabase.rawQuery(
-            """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode
+            """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id
                 FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS'""",
             arrayOf(gameId.toString())
         ).use { cursor -> if (cursor.moveToFirst()) cursor.toGameSession() else null }
@@ -427,6 +479,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 if (!hasStations) throw UserMessageException(UserMessageKey.GAME_HAS_NO_STATIONS)
 
                 val now = System.currentTimeMillis()
+                val routeStartId = getGameRoute(database, gameId).startStationId
                 sessionId = database.insertOrThrow(
                     "game_sessions",
                     null,
@@ -436,6 +489,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                         put("scoring_mode", scoringMode.name)
                         put("created_at", now)
                         put("updated_at", now)
+                        if (routeStartId == null) putNull("expected_station_id") else put("expected_station_id", routeStartId)
                         put("total_task_count", database.rawQuery(
                             "SELECT COUNT(*) FROM tasks INNER JOIN stations ON stations.id = tasks.station_id WHERE stations.game_id = ?",
                             arrayOf(gameId.toString())
@@ -461,7 +515,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         database.rawQuery(
             """SELECT game_sessions.id, game_sessions.game_id, game_sessions.status,
                 game_sessions.created_at, game_sessions.updated_at, game_sessions.completed_at,
-                game_sessions.scoring_mode,
+                game_sessions.scoring_mode, game_sessions.expected_station_id,
                 games.title
                 FROM game_sessions INNER JOIN games ON games.id = game_sessions.game_id
                 WHERE game_sessions.id = ?""",
@@ -469,7 +523,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         ).use { cursor ->
             if (!cursor.moveToFirst()) return null
             session = cursor.toGameSession()
-            gameTitle = cursor.getString(7)
+            gameTitle = cursor.getString(8)
         }
         return loadSessionProgress(database, session, gameTitle)
     }
@@ -481,7 +535,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         database.beginTransaction()
         try {
             val session = database.rawQuery(
-                """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode
+                """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id
                     FROM game_sessions WHERE id = ?""",
                 arrayOf(sessionId.toString())
             ).use { cursor -> if (cursor.moveToFirst()) cursor.toGameSession() else null }
@@ -523,7 +577,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 resumed = true
             }
             acceptedStation = station
-            if (getTasks(database, station.id).isEmpty()) completeStation(database, session, station.id, now)
+            if (getTasks(database, station.id).isEmpty()) completeStation(database, session, station.id, now, RouteCondition.INFO)
             database.execSQL("UPDATE game_sessions SET updated_at = ? WHERE id = ?", arrayOf(now, sessionId))
             database.setTransactionSuccessful()
         } finally {
@@ -654,7 +708,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 "UPDATE task_attempts SET correctness = ?, submitted_at = ?, awarded_points = ? WHERE id = ? AND submitted_at IS NULL",
                 arrayOf(if (correctness == true) 1 else 0, now, awardedPoints, pending.first)
             )
-            completeStation(database, session, stationId, now)
+            completeStation(database, session, stationId, now, if (correctness == true) RouteCondition.CORRECT else RouteCondition.INCORRECT)
             database.execSQL("UPDATE game_sessions SET updated_at = ? WHERE id = ?", arrayOf(now, sessionId))
             database.setTransactionSuccessful()
         } finally {
@@ -703,7 +757,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 arrayOf(wrongAttemptId)
             )
             val now = System.currentTimeMillis()
-            completeStation(database, session, stationId, now)
+            completeStation(database, session, stationId, now, RouteCondition.INCORRECT)
             database.execSQL("UPDATE game_sessions SET updated_at = ? WHERE id = ?", arrayOf(now, sessionId))
             database.setTransactionSuccessful()
         } finally {
@@ -761,7 +815,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             gameTitle = gameTitle,
             stations = stations,
             visitedStationIds = visitedIds,
-            nextStation = stations.firstOrNull { it.id !in completedIds },
+            nextStation = findNextStation(database, session.id, session.gameId)
+                ?.let { expected -> stations.firstOrNull { it.id == expected.id } },
             completedStationIds = completedIds,
             stationVisits = visits,
             currentStation = currentStation,
@@ -769,7 +824,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             score = sessionTotals.first,
             completedTaskCount = sessionTotals.second,
             resultTotalTaskCount = resultTotals.first,
-            resultTotalStationCount = resultTotals.second
+            resultTotalStationCount = resultTotals.second,
+            routeMode = getGameRoute(database, session.gameId).mode
         )
     }
 
@@ -798,7 +854,21 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         database: SQLiteDatabase,
         sessionId: Long,
         gameId: Long
-    ): Station? = database.rawQuery(
+    ): Station? {
+        val route = getGameRoute(database, gameId)
+        if (route.mode == GameProgressionMode.BRANCHED) {
+            val expectedId = database.rawQuery(
+                "SELECT expected_station_id FROM game_sessions WHERE id = ?",
+                arrayOf(sessionId.toString())
+            ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
+            return expectedId?.let { stationId ->
+                database.rawQuery(
+                    "SELECT id, game_id, title, body_text, position, qr_token FROM stations WHERE id = ? AND game_id = ?",
+                    arrayOf(stationId.toString(), gameId.toString())
+                ).use { cursor -> if (cursor.moveToFirst()) cursor.toStation() else null }
+            }
+        }
+        return database.rawQuery(
         """SELECT stations.id, stations.game_id, stations.title, stations.body_text,
             stations.position, stations.qr_token
             FROM stations WHERE stations.game_id = ?
@@ -808,17 +878,35 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     AND station_visits.completed_at IS NOT NULL
             ) ORDER BY stations.position ASC LIMIT 1""",
         arrayOf(gameId.toString(), sessionId.toString())
-    ).use { cursor -> if (cursor.moveToFirst()) cursor.toStation() else null }
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.toStation() else null }
+    }
 
     private fun completeSession(database: SQLiteDatabase, sessionId: Long, completedAt: Long) {
         database.execSQL(
-            """UPDATE game_sessions SET status = 'COMPLETED', updated_at = ?, completed_at = ?
+            """UPDATE game_sessions SET status = 'COMPLETED', updated_at = ?, completed_at = ?,
+                total_station_count = CASE WHEN EXISTS (
+                    SELECT 1 FROM game_routes WHERE game_routes.game_id = game_sessions.game_id
+                ) THEN (SELECT COUNT(*) FROM station_visits
+                    WHERE station_visits.session_id = game_sessions.id AND station_visits.completed_at IS NOT NULL)
+                    ELSE total_station_count END,
+                total_task_count = CASE WHEN EXISTS (
+                    SELECT 1 FROM game_routes WHERE game_routes.game_id = game_sessions.game_id
+                ) THEN (SELECT COUNT(*) FROM tasks INNER JOIN station_visits
+                    ON station_visits.station_id = tasks.station_id
+                    WHERE station_visits.session_id = game_sessions.id AND station_visits.completed_at IS NOT NULL)
+                    ELSE total_task_count END
                 WHERE id = ? AND status = 'IN_PROGRESS'""",
             arrayOf(completedAt, completedAt, sessionId)
         )
     }
 
-    private fun completeStation(database: SQLiteDatabase, session: GameSession, stationId: Long, completedAt: Long) {
+    private fun completeStation(
+        database: SQLiteDatabase,
+        session: GameSession,
+        stationId: Long,
+        completedAt: Long,
+        routeCondition: RouteCondition
+    ) {
         val hasIncompleteTask = database.rawQuery(
             """SELECT 1 FROM tasks WHERE station_id = ? AND NOT EXISTS (
                 SELECT 1 FROM task_attempts
@@ -833,6 +921,22 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             "UPDATE station_visits SET completed_at = ? WHERE session_id = ? AND station_id = ? AND completed_at IS NULL",
             arrayOf(completedAt, session.id, stationId)
         )
+        val route = getGameRoute(database, session.gameId)
+        if (route.mode == GameProgressionMode.BRANCHED) {
+            val targetId = database.rawQuery(
+                "SELECT target_station_id FROM station_transitions WHERE source_station_id = ? AND condition = ?",
+                arrayOf(stationId.toString(), routeCondition.name)
+            ).use { cursor ->
+                if (!cursor.moveToFirst()) throw UserMessageException(UserMessageKey.ROUTE_TRANSITION_MISSING)
+                if (cursor.isNull(0)) null else cursor.getLong(0)
+            }
+            database.execSQL(
+                "UPDATE game_sessions SET expected_station_id = ? WHERE id = ? AND status = 'IN_PROGRESS'",
+                arrayOf(targetId, session.id)
+            )
+            if (targetId == null) completeSession(database, session.id, completedAt)
+            return
+        }
         if (findNextStation(database, session.id, session.gameId) == null) {
             completeSession(database, session.id, completedAt)
         }
@@ -840,7 +944,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
 
     private fun getSession(database: SQLiteDatabase, sessionId: Long): GameSession? =
         database.rawQuery(
-            "SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode FROM game_sessions WHERE id = ?",
+            "SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id FROM game_sessions WHERE id = ?",
             arrayOf(sessionId.toString())
         ).use { cursor -> if (cursor.moveToFirst()) cursor.toGameSession() else null }
 
@@ -957,6 +1061,132 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         }
         return stations
     }
+
+    private fun getGameRoute(database: SQLiteDatabase, gameId: Long): GameRoute {
+        val startStationId = database.rawQuery(
+            "SELECT start_station_id FROM game_routes WHERE game_id = ?",
+            arrayOf(gameId.toString())
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
+            ?: return GameRoute()
+        val transitions = mutableListOf<com.qrhry.app.domain.RouteTransition>()
+        database.rawQuery(
+            """SELECT station_transitions.source_station_id, station_transitions.condition,
+                station_transitions.target_station_id FROM station_transitions
+                INNER JOIN stations ON stations.id = station_transitions.source_station_id
+                WHERE stations.game_id = ?""",
+            arrayOf(gameId.toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) transitions += com.qrhry.app.domain.RouteTransition(
+                sourceStationId = cursor.getLong(0),
+                condition = runCatching { RouteCondition.valueOf(cursor.getString(1)) }
+                    .getOrElse { throw UserMessageException(UserMessageKey.ROUTE_TRANSITION_INVALID) },
+                targetStationId = if (cursor.isNull(2)) null else cursor.getLong(2)
+            )
+        }
+        return GameRoute(GameProgressionMode.BRANCHED, startStationId, transitions)
+    }
+
+    private fun saveGameRoute(
+        database: SQLiteDatabase,
+        gameId: Long,
+        route: GameRouteDraft,
+        stations: List<Station>
+    ) {
+        val start = stations.getOrNull(checkNotNull(route.startStationPosition))
+            ?: throw UserMessageException(UserMessageKey.ROUTE_START_REQUIRED)
+        database.delete(
+            "station_transitions",
+            "source_station_id IN (SELECT id FROM stations WHERE game_id = ?)",
+            arrayOf(gameId.toString())
+        )
+        database.delete("game_routes", "game_id = ?", arrayOf(gameId.toString()))
+        database.insertOrThrow(
+            "game_routes", null,
+            ContentValues().apply { put("game_id", gameId); put("start_station_id", start.id) }
+        )
+        route.transitions.forEach { transition ->
+            val source = stations.getOrNull(transition.sourceStationPosition)
+                ?: throw UserMessageException(UserMessageKey.ROUTE_STATION_INVALID)
+            val target = transition.targetStationPosition?.let { stations.getOrNull(it)?.id }
+            if (transition.targetStationPosition != null && target == null) {
+                throw UserMessageException(UserMessageKey.ROUTE_STATION_INVALID)
+            }
+            database.insertOrThrow(
+                "station_transitions", null,
+                ContentValues().apply {
+                    put("source_station_id", source.id)
+                    put("condition", transition.condition.name)
+                    if (target == null) putNull("target_station_id") else put("target_station_id", target)
+                }
+            )
+        }
+    }
+
+    private fun reconcileStationRoute(database: SQLiteDatabase, stationId: Long, isInformation: Boolean) {
+        val existing = mutableListOf<Pair<RouteCondition, Long?>>()
+        database.rawQuery(
+            "SELECT condition, target_station_id FROM station_transitions WHERE source_station_id = ?",
+            arrayOf(stationId.toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) existing += RouteCondition.valueOf(cursor.getString(0)) to
+                if (cursor.isNull(1)) null else cursor.getLong(1)
+        }
+        if (isInformation && existing.none { it.first == RouteCondition.INFO }) {
+            val correctTarget = existing.firstOrNull { it.first == RouteCondition.CORRECT }?.second
+            val incorrectTarget = existing.firstOrNull { it.first == RouteCondition.INCORRECT }?.second
+            if (correctTarget != incorrectTarget) throw UserMessageException(UserMessageKey.ROUTE_TRANSITION_INVALID)
+            val destination = correctTarget
+            database.delete("station_transitions", "source_station_id = ?", arrayOf(stationId.toString()))
+            database.insertOrThrow("station_transitions", null, ContentValues().apply {
+                put("source_station_id", stationId)
+                put("condition", RouteCondition.INFO.name)
+                if (destination == null) putNull("target_station_id") else put("target_station_id", destination)
+            })
+        } else if (!isInformation && existing.none { it.first == RouteCondition.CORRECT }) {
+            val destination = existing.firstOrNull { it.first == RouteCondition.INFO }?.second
+            database.delete("station_transitions", "source_station_id = ?", arrayOf(stationId.toString()))
+            listOf(RouteCondition.CORRECT, RouteCondition.INCORRECT).forEach { condition ->
+                database.insertOrThrow("station_transitions", null, ContentValues().apply {
+                    put("source_station_id", stationId)
+                    put("condition", condition.name)
+                    if (destination == null) putNull("target_station_id") else put("target_station_id", destination)
+                })
+            }
+        }
+    }
+
+    private fun validateStoredGameRoute(database: SQLiteDatabase, gameId: Long) {
+        val stations = getStations(database, gameId)
+        val idToPosition = stations.associate { it.id to it.position }
+        val route = getGameRoute(database, gameId)
+        val draft = GameRouteDraft(
+            route.mode,
+            route.startStationId?.let(idToPosition::get),
+            route.transitions.map { edge ->
+                RouteTransitionDraft(
+                    idToPosition[edge.sourceStationId] ?: -1,
+                    edge.condition,
+                    edge.targetStationId?.let { idToPosition[it] ?: -1 }
+                )
+            }
+        )
+        GameRouteValidator.validationError(stations.map { GameRouteValidator.Node(it.position, it.tasks.size) }, draft)
+            ?.let { throw UserMessageException(it) }
+    }
+
+    private fun routeDraftToModel(route: GameRouteDraft, stations: List<Station>): GameRoute = GameRoute(
+        mode = route.mode,
+        startStationId = route.startStationPosition?.let { stations.getOrNull(it)?.id },
+        transitions = route.transitions.mapNotNull { transition ->
+            stations.getOrNull(transition.sourceStationPosition)?.let { source ->
+                com.qrhry.app.domain.RouteTransition(
+                    source.id,
+                    transition.condition,
+                    transition.targetStationPosition?.let { stations.getOrNull(it)?.id }
+                )
+            }
+        }
+    )
 
     private fun getTasks(database: SQLiteDatabase, stationId: Long): List<StationTask> {
         val tasks = mutableListOf<StationTask>()
@@ -1227,7 +1457,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         createdAt = getLong(3),
         updatedAt = getLong(4),
         completedAt = if (isNull(5)) null else getLong(5),
-        scoringMode = TaskScoringMode.valueOf(getString(6))
+        scoringMode = TaskScoringMode.valueOf(getString(6)),
+        expectedStationId = if (columnCount > 7 && !isNull(7)) getLong(7) else null
     )
 
     private fun android.database.Cursor.toCompletedSessionResult() = CompletedSessionResult(

@@ -45,6 +45,7 @@ class GameDatabaseHelper(
         addV6ScoringColumns(db)
         addV7ScoringPolicyColumns(db)
         migrateV7ToV8(db)
+        migrateV8ToV9(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -78,6 +79,10 @@ class GameDatabaseHelper(
                 7 -> {
                     migrateV7ToV8(db)
                     version = 8
+                }
+                8 -> {
+                    migrateV8ToV9(db)
+                    version = 9
                 }
                 else -> throw SQLiteException(
                     "No migration is defined from database version $version to $newVersion."
@@ -190,6 +195,47 @@ class GameDatabaseHelper(
         db.execSQL("ALTER TABLE task_attempts_v8 RENAME TO task_attempts")
         createTaskIndexes(db)
     }
+
+    private fun migrateV8ToV9(db: SQLiteDatabase) {
+        if (!hasColumn(db, "game_sessions", "expected_station_id")) {
+            db.execSQL("ALTER TABLE game_sessions ADD COLUMN expected_station_id INTEGER")
+        }
+        if (!tableExists(db, "game_routes")) db.execSQL(
+            """CREATE TABLE game_routes (
+                game_id INTEGER PRIMARY KEY NOT NULL,
+                start_station_id INTEGER NOT NULL,
+                FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
+                FOREIGN KEY (start_station_id) REFERENCES stations(id) ON DELETE RESTRICT
+            )"""
+        )
+        if (!tableExists(db, "station_transitions")) db.execSQL(
+            """CREATE TABLE station_transitions (
+                source_station_id INTEGER NOT NULL,
+                condition TEXT NOT NULL CHECK (condition IN ('CORRECT', 'INCORRECT', 'INFO')),
+                target_station_id INTEGER,
+                PRIMARY KEY (source_station_id, condition),
+                FOREIGN KEY (source_station_id) REFERENCES stations(id) ON DELETE CASCADE,
+                FOREIGN KEY (target_station_id) REFERENCES stations(id) ON DELETE CASCADE
+            )"""
+        )
+        if (!indexExists(db, "index_station_transitions_target")) {
+            db.execSQL("CREATE INDEX index_station_transitions_target ON station_transitions(target_station_id)")
+        }
+    }
+
+    private fun hasColumn(db: SQLiteDatabase, table: String, column: String): Boolean =
+        db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+            while (cursor.moveToNext()) if (cursor.getString(1) == column) return@use true
+            false
+        }
+
+    private fun tableExists(db: SQLiteDatabase, name: String): Boolean = db.rawQuery(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", arrayOf(name)
+    ).use { it.moveToFirst() }
+
+    private fun indexExists(db: SQLiteDatabase, name: String): Boolean = db.rawQuery(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", arrayOf(name)
+    ).use { it.moveToFirst() }
 
     private fun createTaskIndexes(db: SQLiteDatabase) {
         db.execSQL("CREATE INDEX index_tasks_station_id ON tasks(station_id)")
@@ -380,6 +426,6 @@ class GameDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "qrhry.db"
-        const val DATABASE_VERSION = 8
+        const val DATABASE_VERSION = 9
     }
 }

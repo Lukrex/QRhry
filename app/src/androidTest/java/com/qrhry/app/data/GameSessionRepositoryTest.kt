@@ -6,6 +6,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.qrhry.app.data.local.GameDatabaseHelper
 import com.qrhry.app.domain.GameDraft
+import com.qrhry.app.domain.GameProgressionMode
+import com.qrhry.app.domain.GameRouteDraft
+import com.qrhry.app.domain.MultipleChoiceTaskDraft
+import com.qrhry.app.domain.TaskOptionDraft
+import com.qrhry.app.domain.RouteCondition
+import com.qrhry.app.domain.RouteTransitionDraft
 import com.qrhry.app.domain.GameSessionStatus
 import com.qrhry.app.domain.StationDraft
 import com.qrhry.app.domain.StationScanResult
@@ -129,6 +135,84 @@ class GameSessionRepositoryTest {
     }
 
     @Test
+    fun branchedRouteSelectsCorrectAndIncorrectDestinationsOnlyWhenFinalized() {
+        val game = createGame("Branching", "Question", "Information")
+        val question = game.stations[0]
+        val taskId = UUID.randomUUID().toString()
+        val rightId = UUID.randomUUID().toString()
+        val wrongId = UUID.randomUUID().toString()
+        repository.updateStationContent(
+            question.id, question.title, question.bodyText,
+            tasks = listOf(MultipleChoiceTaskDraft(taskId, "Question?", 0, listOf(
+                TaskOptionDraft(rightId, "Right", 0, true), TaskOptionDraft(wrongId, "Wrong", 1, false)
+            )))
+        )
+        val route = GameRouteDraft(GameProgressionMode.BRANCHED, 0, listOf(
+            RouteTransitionDraft(0, RouteCondition.CORRECT, 1),
+            RouteTransitionDraft(0, RouteCondition.INCORRECT, null),
+            RouteTransitionDraft(1, RouteCondition.INFO, null)
+        ))
+        repository.updateGameRoute(game.id, route)
+
+        val session = repository.startOrResumeSession(game.id)
+        assertEquals(question.id, session.session.expectedStationId)
+        repository.recordStationScan(session.session.id, question.qrToken)
+        repository.savePendingTaskSelection(session.session.id, taskId, rightId)
+        val correct = repository.submitTaskAttempt(session.session.id, taskId) as com.qrhry.app.domain.TaskSubmissionResult.Submitted
+        assertTrue(correct.isCorrect)
+        assertEquals("Information", correct.progress.nextStation?.title)
+        databaseHelper.close()
+        databaseHelper = GameDatabaseHelper(context, databaseName)
+        repository = GameRepository(databaseHelper)
+        val restored = checkNotNull(repository.getSessionProgress(session.session.id))
+        assertEquals("Information", restored.nextStation?.title)
+        assertEquals(game.stations[1].id, restored.session.expectedStationId)
+        val finished = repository.recordStationScan(session.session.id, game.stations[1].qrToken) as StationScanResult.Accepted
+        assertEquals(GameSessionStatus.COMPLETED, finished.progress.session.status)
+
+        val retry = repository.startOrResumeSession(game.id)
+        repository.recordStationScan(retry.session.id, question.qrToken)
+        repository.savePendingTaskSelection(retry.session.id, taskId, wrongId)
+        val incorrect = repository.submitTaskAttempt(retry.session.id, taskId) as com.qrhry.app.domain.TaskSubmissionResult.Submitted
+        assertTrue(!incorrect.isCorrect)
+        assertEquals(question.id, incorrect.progress.nextStation?.id)
+        val ended = repository.continueTaskAfterWrongAnswer(retry.session.id, taskId)
+        assertEquals(GameSessionStatus.COMPLETED, ended.session.status)
+        assertEquals(1, ended.completedStationCount)
+    }
+
+    @Test
+    fun eventualCorrectRouteUsesFinalAnswerEvenWhenFirstTryPolicyAwardsNoPoints() {
+        val game = repository.createGame(GameDraft(
+            "First try branch",
+            listOf(StationDraft("Question", ""), StationDraft("Information", "")),
+            com.qrhry.app.domain.TaskScoringMode.FIRST_TRY_ONLY
+        ))
+        val taskId = UUID.randomUUID().toString()
+        val correctId = UUID.randomUUID().toString()
+        val wrongId = UUID.randomUUID().toString()
+        repository.updateStationContent(game.stations[0].id, "Question", "", tasks = listOf(
+            MultipleChoiceTaskDraft(taskId, "Question?", 0, listOf(
+                TaskOptionDraft(correctId, "Right", 0, true), TaskOptionDraft(wrongId, "Wrong", 1, false)
+            ))
+        ))
+        repository.updateGameRoute(game.id, GameRouteDraft(GameProgressionMode.BRANCHED, 0, listOf(
+            RouteTransitionDraft(0, RouteCondition.CORRECT, 1),
+            RouteTransitionDraft(0, RouteCondition.INCORRECT, null),
+            RouteTransitionDraft(1, RouteCondition.INFO, null)
+        )))
+        val session = repository.startOrResumeSession(game.id)
+        repository.recordStationScan(session.session.id, game.stations[0].qrToken)
+        repository.savePendingTaskSelection(session.session.id, taskId, wrongId)
+        assertTrue(!(repository.submitTaskAttempt(session.session.id, taskId) as com.qrhry.app.domain.TaskSubmissionResult.Submitted).isCorrect)
+        repository.savePendingTaskSelection(session.session.id, taskId, correctId)
+        val eventual = repository.submitTaskAttempt(session.session.id, taskId) as com.qrhry.app.domain.TaskSubmissionResult.Submitted
+        assertTrue(eventual.isCorrect)
+        assertEquals(0, eventual.pointsAwarded)
+        assertEquals("Information", eventual.progress.nextStation?.title)
+    }
+
+    @Test
     fun reopeningDatabaseRestoresActiveSessionProgress() {
         val game = createGame("Trail")
         val session = repository.startOrResumeSession(game.id)
@@ -142,6 +226,33 @@ class GameSessionRepositoryTest {
         assertEquals(listOf(session.session.id), repository.getActiveSessions().map { it.id })
         assertEquals(1, restored?.completedStationCount)
         assertEquals("Second", restored?.nextStation?.title)
+    }
+
+    @Test
+    fun v8ToV9MigrationPreservesGamesAndActiveSessions() {
+        val game = createGame("Migration trail")
+        val session = repository.startOrResumeSession(game.id).session
+        databaseHelper.close()
+
+        val oldDatabase = SQLiteDatabase.openDatabase(
+            context.getDatabasePath(databaseName).absolutePath,
+            null,
+            SQLiteDatabase.OPEN_READWRITE
+        )
+        oldDatabase.execSQL("DROP TABLE station_transitions")
+        oldDatabase.execSQL("DROP TABLE game_routes")
+        oldDatabase.version = 8
+        oldDatabase.close()
+
+        databaseHelper = GameDatabaseHelper(context, databaseName)
+        repository = GameRepository(databaseHelper)
+        val reopened = checkNotNull(repository.getGame(game.id))
+        val restored = checkNotNull(repository.getSessionProgress(session.id))
+        assertEquals("Migration trail", reopened.title)
+        assertEquals(listOf("First", "Second"), reopened.stations.map { it.title })
+        assertEquals(GameSessionStatus.IN_PROGRESS, restored.session.status)
+        assertEquals("First", restored.nextStation?.title)
+        assertEquals(com.qrhry.app.domain.GameProgressionMode.LINEAR, reopened.route.mode)
     }
 
     @Test

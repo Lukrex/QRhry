@@ -752,7 +752,7 @@ class GameTaskRepositoryTest {
         databaseHelper = GameDatabaseHelper(context, databaseName)
         repository = GameRepository(databaseHelper)
         val db = databaseHelper.readableDatabase
-        assertEquals(8, db.version)
+        assertEquals(9, db.version)
         assertEquals("MULTIPLE_CHOICE", db.rawQuery("SELECT type FROM tasks WHERE id = 'task-v7'", null).use {
             it.moveToFirst(); it.getString(0)
         })

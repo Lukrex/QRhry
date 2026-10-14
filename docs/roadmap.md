@@ -30,11 +30,18 @@
 - [x] SQLite v8 migration preserving existing task and attempt data.
 - [x] `.qrhry` v2 typed task export with v1 multiple-choice import compatibility.
 
-All game content remains data-driven; progression remains linear by station `position`.
+- [x] M10: optional acyclic branched routes with answer-result and information
+      transitions, route-aware QR validation, persistent session targets, and
+      multiple endings.
+- [x] SQLite v9 route tables and session cursor; existing games remain linear.
+- [x] `.qrhry` v3 route export/import with v1/v2 linear import compatibility.
+
+Linear games continue to follow station `position`; branched games use explicit
+route edges.
 
 ## Later, not implemented
 
 Numeric answers, secret codes, optional tasks, hints, timers,
-achievements, branching, networking, synchronization, and shared content
+achievements, networking, synchronization, and shared content
 versioning. Add each only with an explicit model, migration, and test plan; do
 not hardcode a demonstration game into game logic.

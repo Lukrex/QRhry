@@ -1,7 +1,7 @@
 # Database
 
 The app uses raw SQLite through `SQLiteOpenHelper`; database operations are
-isolated in the data layer. The current schema version is 8.
+isolated in the data layer. The current schema version is 9.
 
 ## Core tables
 
@@ -17,6 +17,17 @@ isolated in the data layer. The current schema version is 8.
 delete cascade, nonblank `title`, `body_text`, nonnegative `position`, and
 unique `qr_token`. `UNIQUE(game_id, position)` preserves linear order.
 
+### `game_routes` and `station_transitions`
+
+Games without a `game_routes` row remain linear and use `stations.position`.
+A route row identifies a branched game's starting station. Each transition is
+keyed by source station and `condition` (`CORRECT`, `INCORRECT`, or `INFO`). A
+null `target_station_id` is an explicit end of the game; a missing transition
+is invalid. Source and target stations use foreign keys. Route writes are
+transactional and the repository validates required outcomes, reachability,
+and cycles before saving. Branched task stations have one task; information
+stations have none.
+
 ### `station_media`
 
 Station-owned metadata for images/audio: UUID `id`, `station_id` with cascade,
@@ -30,8 +41,9 @@ URIs.
 ### `game_sessions`
 
 `id`, `game_id`, `status` (`IN_PROGRESS`/`COMPLETED`), `created_at`, `updated_at`,
-nullable `completed_at`, and nullable `total_task_count` / `total_station_count`
-snapshots, plus a `scoring_mode` snapshot. New sessions capture totals and the
+nullable `completed_at`, nullable `total_task_count` / `total_station_count`
+snapshots, a `scoring_mode` snapshot, and nullable `expected_station_id` route
+cursor. New sessions capture totals and the
 game's current scoring mode at start; later policy edits affect future runs
 only. V5 active sessions are
 backfilled during migration; completed legacy sessions keep null totals because
@@ -46,7 +58,8 @@ game while retaining runs.
 key `(session_id, station_id)`. **A visit row means scanned/visited, not
 completed.** A non-null `completed_at` means the station is complete. The table
 does not duplicate `game_id`; repository transactions validate game ownership
-and ordered progression.
+and progression. Branched sessions compare scans against the route cursor;
+linear sessions retain position-based behavior.
 
 ## Task tables
 
@@ -87,7 +100,9 @@ Task completion is derived from either a submitted correct attempt or a
 finalized incorrect attempt. Station completion is stored on
 `station_visits.completed_at` and occurs on scan for taskless stations, or after
 all station tasks are correct or explicitly finalized. The first
-non-completed station by `position` is the progression cursor.
+non-completed station by `position` is the linear progression cursor. Branched
+sessions store their cursor in `game_sessions.expected_station_id`. Selecting
+the next edge and completing the station happen in one transaction.
 
 ## Transactions and migrations
 
@@ -119,3 +134,6 @@ a path is undefined; it never silently drops user data.
 migration deliberately creates the historical v3 visit shape so the following
 v4→v5 step can add `completed_at` exactly once before v5→v6 adds task points
 and v6→v7 adds scoring policies and explicit task finalization.
+- **v8→v9** adds the nullable session route cursor and creates empty route
+  configuration/transition tables. Existing games have no route row and remain
+  linear; sessions, station order, attempts, and scores are not rewritten.

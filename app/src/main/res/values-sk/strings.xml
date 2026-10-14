@@ -208,4 +208,25 @@
     <string name="error_games_load">Uložené hry sa nepodarilo načítať.</string>
     <string name="error_session_start">Hernú reláciu sa nepodarilo spustiť.</string>
     <string name="error_scanner_lookup">Skener alebo vyhľadanie stanovišťa zlyhalo. Skúste to znova.</string>
+    <string name="edit_game_route">Upraviť trasu hry</string>
+    <string name="route_heading">Trasa hry</string>
+    <string name="route_mode">Postup hry</string>
+    <string name="route_linear">Podľa poradia stanovíšť</string>
+    <string name="route_branched">Vetviť podľa odpovede</string>
+    <string name="route_start">Začiatočné stanovište</string>
+    <string name="route_correct">Po správnej odpovedi</string>
+    <string name="route_incorrect">Po nesprávnej odpovedi</string>
+    <string name="route_information">Po informačnom obsahu</string>
+    <string name="route_end">Koniec hry</string>
+    <string name="route_save">Uložiť trasu</string>
+    <string name="route_saved">Trasa sa uložila.</string>
+    <string name="route_next_scan">Ďalej naskenujte: %1$s</string>
+    <string name="error_route_start">Vyberte začiatočné stanovište.</string>
+    <string name="error_route_transition_missing">Pre každý možný výsledok vyberte cieľ alebo koniec hry.</string>
+    <string name="error_route_transition_invalid">Trasa obsahuje neplatný alebo duplicitný prechod.</string>
+    <string name="error_route_station_invalid">Trasa odkazuje na nedostupné stanovište.</string>
+    <string name="error_route_unreachable">Každé stanovište musí byť dosiahnuteľné zo začiatku hry.</string>
+    <string name="error_route_cycle">Trasa sa nemôže vracať na predchádzajúce stanovište.</string>
+    <string name="error_route_multiple_tasks">Vetvené stanovište môže mať v tejto verzii iba jednu úlohu.</string>
+    <string name="error_route_active_session">Pred zmenou trasy dokončite aktívnu hru.</string>
 </resources>

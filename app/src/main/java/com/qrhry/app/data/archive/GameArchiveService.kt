@@ -8,6 +8,9 @@ import com.qrhry.app.data.local.GameAssetStore
 import com.qrhry.app.data.local.StagedGameAssets
 import com.qrhry.app.domain.Game
 import com.qrhry.app.domain.GameDraft
+import com.qrhry.app.domain.GameProgressionMode
+import com.qrhry.app.domain.GameRouteDraft
+import com.qrhry.app.domain.RouteTransitionDraft
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
 import com.qrhry.app.domain.MultipleChoiceTask
 import com.qrhry.app.domain.TrueFalseTask
@@ -55,6 +58,7 @@ class GameArchiveService(
         try {
             val game = repository.getGameExportSnapshot(gameId)
                 ?: throw UserMessageException(UserMessageKey.GAME_UNAVAILABLE)
+            val archiveStationKeys = game.stations.associate { it.id to UUID.randomUUID().toString() }
             val mediaFiles = linkedMapOf<String, File>()
             val stations = game.stations.map { station ->
                 val media = station.media.map { item ->
@@ -92,7 +96,8 @@ class GameArchiveService(
                             is TrueFalseTask -> GameArchiveTask(task.prompt, task.position, task.points, task.type, correctBoolean = task.correctAnswer)
                             is ShortTextTask -> GameArchiveTask(task.prompt, task.position, task.points, task.type, correctText = task.correctAnswer)
                         }
-                    }
+                    },
+                    stationKey = checkNotNull(archiveStationKeys[station.id])
                 )
             }
             codec.write(
@@ -101,7 +106,16 @@ class GameArchiveService(
                         formatVersion = GameArchiveLimits.CURRENT_FORMAT_VERSION,
                         title = game.title,
                         scoringMode = game.scoringMode,
-                        stations = stations
+                        stations = stations,
+                        progressionMode = game.route.mode,
+                        startStationKey = game.route.startStationId?.let(archiveStationKeys::get),
+                        transitions = game.route.transitions.map { transition ->
+                            GameArchiveTransition(
+                                sourceStationKey = checkNotNull(archiveStationKeys[transition.sourceStationId]),
+                                condition = transition.condition,
+                                targetStationKey = transition.targetStationId?.let(archiveStationKeys::get)
+                            )
+                        }
                     ),
                     mediaFiles = mediaFiles
                 ),
@@ -162,7 +176,8 @@ class GameArchiveService(
             stagedAssets = assetStore.stageArchiveAssets(stagedImport.bundle, gameUuid)
             assetStore.promoteArchiveAssets(stagedAssets)
             val draft = stagedImport.bundle.manifest.toGameDraft()
-            return repository.importGame(draft, gameUuid, stagedAssets.mediaByStation)
+            val route = stagedImport.bundle.manifest.toRouteDraft()
+            return repository.importGame(draft, gameUuid, stagedAssets.mediaByStation, route)
         } catch (exception: Exception) {
             stagedAssets?.let(assetStore::discardArchiveAssets)
             if (exception is UserMessageException) throw exception
@@ -203,6 +218,24 @@ class GameArchiveService(
             )
         }
     )
+
+    private fun GameArchiveManifest.toRouteDraft(): GameRouteDraft? {
+        if (progressionMode == GameProgressionMode.LINEAR) return null
+        val positions = stations.associate { it.stationKey to it.position }
+        return GameRouteDraft(
+            mode = progressionMode,
+            startStationPosition = startStationKey?.let(positions::get),
+            transitions = transitions.map { transition ->
+                RouteTransitionDraft(
+                    sourceStationPosition = positions[transition.sourceStationKey]
+                        ?: throw UserMessageException(UserMessageKey.ARCHIVE_INVALID),
+                    condition = transition.condition,
+                    targetStationPosition = transition.targetStationKey?.let { positions[it]
+                        ?: throw UserMessageException(UserMessageKey.ARCHIVE_INVALID) }
+                )
+            }
+        )
+    }
 
     private fun sha256(file: File): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")

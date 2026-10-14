@@ -3,6 +3,8 @@ package com.qrhry.app.data.archive
 import com.qrhry.app.domain.StationMediaType
 import com.qrhry.app.domain.TaskScoringMode
 import com.qrhry.app.domain.StationTaskType
+import com.qrhry.app.domain.GameProgressionMode
+import com.qrhry.app.domain.RouteCondition
 import java.io.File
 
 internal object GameArchiveLimits {
@@ -15,14 +17,17 @@ internal object GameArchiveLimits {
     const val MAX_TASKS_PER_STATION = 32
     const val MAX_OPTIONS_PER_TASK = 32
     const val MAX_MEDIA_PER_STATION = 2
-    const val CURRENT_FORMAT_VERSION = 2
+    const val CURRENT_FORMAT_VERSION = 3
 }
 
 data class GameArchiveManifest(
     val formatVersion: Int,
     val title: String,
     val scoringMode: TaskScoringMode,
-    val stations: List<GameArchiveStation>
+    val stations: List<GameArchiveStation>,
+    val progressionMode: GameProgressionMode = GameProgressionMode.LINEAR,
+    val startStationKey: String? = null,
+    val transitions: List<GameArchiveTransition> = emptyList()
 )
 
 data class GameArchiveStation(
@@ -30,7 +35,14 @@ data class GameArchiveStation(
     val bodyText: String,
     val position: Int,
     val media: List<GameArchiveMedia>,
-    val tasks: List<GameArchiveTask>
+    val tasks: List<GameArchiveTask>,
+    val stationKey: String = ""
+)
+
+data class GameArchiveTransition(
+    val sourceStationKey: String,
+    val condition: RouteCondition,
+    val targetStationKey: String?
 )
 
 data class GameArchiveMedia(

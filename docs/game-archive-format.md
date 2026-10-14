@@ -1,6 +1,6 @@
 # `.qrhry` Archive Format
 
-## Version 2
+## Version 3
 
 A `.qrhry` file is a ZIP archive. Its format version is independent of SQLite
 `DATABASE_VERSION` and the game's `content_version`.
@@ -20,14 +20,18 @@ Example manifest shape:
 ```json
 {
   "format": "qrhry",
-  "formatVersion": 2,
+  "formatVersion": 3,
   "title": "School trail",
   "scoringMode": "FIRST_TRY_ONLY",
+  "progressionMode": "LINEAR",
+  "startStationKey": null,
+  "transitions": [],
   "stations": [
     {
       "title": "Courtyard",
       "bodyText": "Look around the courtyard.",
       "position": 0,
+      "stationKey": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
       "media": [
         {
           "entryPath": "assets/550e8400-e29b-41d4-a716-446655440000.bin",
@@ -55,12 +59,22 @@ Example manifest shape:
       "title": "Finish",
       "bodyText": "",
       "position": 1,
+      "stationKey": "a1bd52f7-0d7c-43ae-a194-9cc93a2f4701",
       "media": [],
       "tasks": []
     }
   ]
 }
 ```
+
+For `BRANCHED` games, `startStationKey` identifies the first station and
+`transitions` contains one row per possible outcome. Each row has a
+`sourceStationKey`, a `condition` (`CORRECT`, `INCORRECT`, or `INFO`), and a
+nullable `targetStationKey`; null explicitly ends the game. Both answer
+outcomes are required for task stations, and `INFO` is required for stations
+without tasks. These references use archive-generated station keys, never
+SQLite IDs or source QR tokens. The reader rejects missing/duplicate edges,
+unknown station keys, unreachable stations, and cycles.
 
 `sha256` is lowercase hexadecimal over the exact uncompressed media bytes.
 `byteSize` is the exact uncompressed size. `entryPath` must match the generated
@@ -83,7 +97,7 @@ regenerated for each imported copy.
 
 ## Validation And Limits
 
-The reader accepts only `format = "qrhry"` and versions 1 and 2. Version 1 tasks are interpreted as `MULTIPLE_CHOICE`; version 2 tasks require an explicit type and exactly the fields for that type. Unknown types and malformed type-specific data are rejected. It rejects
+The reader accepts only `format = "qrhry"` and versions 1, 2, and 3. Version 1 tasks are interpreted as `MULTIPLE_CHOICE`; versions 2 and 3 tasks require an explicit type and exactly the fields for that type. Versions 1 and 2 are imported as linear games. Version 3 includes explicit route metadata and station keys. Unknown types and malformed type-specific data are rejected. It rejects
 unknown/missing JSON keys, incorrect JSON types, malformed UTF-8/JSON, invalid
 ordering, blank required text, negative points, invalid scoring modes, fewer
 than two stations, invalid option sets, duplicate media types per station,
@@ -128,7 +142,7 @@ hours, avoiding races with active imports. SQLite and the filesystem do not
 share an atomic commit; cleanup reconciles a process death between directory
 promotion and database commit.
 
-Version 2 exports are not readable by older app versions. The current app continues to import v1. SQLite task data is stored with schema v8.
+Version 3 exports are not readable by older app versions. The current app continues to import v1 and v2. SQLite route data is stored with schema v9.
 
 ## SOČ Demonstration
 

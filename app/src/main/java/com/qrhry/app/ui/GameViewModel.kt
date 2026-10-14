@@ -15,6 +15,7 @@ import com.qrhry.app.data.archive.GameArchiveService
 import com.qrhry.app.domain.Game
 import com.qrhry.app.domain.CompletedSessionResult
 import com.qrhry.app.domain.GameDraft
+import com.qrhry.app.domain.GameRouteDraft
 import com.qrhry.app.domain.GameDraftValidator
 import com.qrhry.app.domain.GameSession
 import com.qrhry.app.domain.GameSessionStatus
@@ -60,6 +61,8 @@ data class GameScreenState(
     val scannerSessionId: Long? = null,
     val scannerReturnRoute: GameScreenRoute = GameScreenRoute.CREATE,
     val editingStation: com.qrhry.app.domain.Station? = null,
+    val routeEditingGame: Game? = null,
+    val isSavingRoute: Boolean = false,
     val isSavingStation: Boolean = false,
     val isSavingTaskAnswer: Boolean = false,
     val taskSkippedFeedback: Boolean = false,
@@ -78,6 +81,7 @@ enum class GameScreenRoute {
     SETTINGS,
     CREATE,
     EDIT_STATION,
+    EDIT_ROUTE,
     PLAY_LIST,
     PLAY_SESSION,
     SCANNER,
@@ -277,6 +281,47 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             route = GameScreenRoute.EDIT_STATION,
             error = null
         )
+    }
+
+    fun editGameRoute(game: Game) {
+        mutableState.value = mutableState.value.copy(
+            routeEditingGame = game,
+            route = GameScreenRoute.EDIT_ROUTE,
+            error = null
+        )
+    }
+
+    fun cancelGameRouteEdit() {
+        mutableState.value = mutableState.value.copy(
+            routeEditingGame = null,
+            route = GameScreenRoute.CREATE,
+            error = null
+        )
+    }
+
+    fun saveGameRoute(gameId: Long, route: GameRouteDraft) {
+        if (mutableState.value.isSavingRoute) return
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(isSavingRoute = true, error = null)
+            try {
+                val games = withContext(Dispatchers.IO) {
+                    repository.updateGameRoute(gameId, route)
+                    repository.getAllGames().map(::hydrateGame)
+                }
+                mutableState.value = mutableState.value.copy(
+                    games = games,
+                    routeEditingGame = null,
+                    route = GameScreenRoute.CREATE,
+                    isSavingRoute = false,
+                    error = null
+                )
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(
+                    isSavingRoute = false,
+                    error = exception.messageKeyOr(UserMessageKey.GENERIC_ERROR)
+                )
+            }
+        }
     }
 
     fun cancelStationEdit() {
@@ -723,7 +768,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.value = when (mutableState.value.route) {
             GameScreenRoute.HOME -> mutableState.value
             GameScreenRoute.SETTINGS -> mutableState.value.copy(route = mutableState.value.settingsReturnRoute)
-            GameScreenRoute.CREATE, GameScreenRoute.EDIT_STATION, GameScreenRoute.PLAY_LIST -> mutableState.value.copy(
+            GameScreenRoute.CREATE, GameScreenRoute.EDIT_STATION, GameScreenRoute.EDIT_ROUTE, GameScreenRoute.PLAY_LIST -> mutableState.value.copy(
                 route = GameScreenRoute.HOME
             )
             GameScreenRoute.PLAY_SESSION -> mutableState.value.copy(
