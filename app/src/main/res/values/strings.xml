@@ -104,6 +104,17 @@
     <string name="remove_audio">Remove audio</string>
     <string name="add_task">Add multiple-choice task</string>
     <string name="multiple_choice_task">Multiple-choice task</string>
+    <string name="task_type">Task type</string>
+    <string name="task_type_multiple_choice">Choose an answer</string>
+    <string name="task_type_true_false">True or false</string>
+    <string name="task_type_short_text">Short text answer</string>
+    <string name="true_answer">True</string>
+    <string name="false_answer">False</string>
+    <string name="correct_answer_label">Correct answer</string>
+    <string name="short_answer_hint">Type your answer</string>
+    <string name="change_task_type_title">Change task type?</string>
+    <string name="change_task_type_body">The saved answer settings for this task will be replaced when you save.</string>
+    <string name="change_task_type_confirm">Change type</string>
     <string name="remove_task">Remove task</string>
     <string name="question">Question</string>
     <string name="task_points">Points</string>
@@ -142,6 +153,8 @@
     <string name="error_option_text_required">Enter text for every answer option.</string>
     <string name="error_one_correct_option">Select exactly one correct answer.</string>
     <string name="error_option_identity">Answer option identity is invalid.</string>
+    <string name="error_text_answer_required">Enter the correct answer.</string>
+    <string name="error_task_definition_invalid">This task is invalid or unsupported.</string>
     <string name="error_task_points">Enter a non-negative whole number of points.</string>
     <string name="game_scoring_mode">How question points are awarded</string>
     <string name="scoring_eventual_correct">Award points for a correct answer, including retries</string>
@@ -176,6 +189,7 @@
     <string name="error_select_answer">Select an answer first.</string>
     <string name="error_task_edit_active">Tasks cannot be changed while this game has an active session.</string>
     <string name="error_task_delete_attempts">A task with saved attempts cannot be removed.</string>
+    <string name="error_task_type_change_attempts">A task with saved attempts cannot change type.</string>
     <string name="error_media_game_identity">Game identity is invalid.</string>
     <string name="error_media_type_unknown">The selected file type could not be determined.</string>
     <string name="error_media_type_unsupported">The selected file type is not supported.</string>

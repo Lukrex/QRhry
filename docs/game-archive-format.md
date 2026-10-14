@@ -1,6 +1,6 @@
 # `.qrhry` Archive Format
 
-## Version 1
+## Version 2
 
 A `.qrhry` file is a ZIP archive. Its format version is independent of SQLite
 `DATABASE_VERSION` and the game's `content_version`.
@@ -20,7 +20,7 @@ Example manifest shape:
 ```json
 {
   "format": "qrhry",
-  "formatVersion": 1,
+  "formatVersion": 2,
   "title": "School trail",
   "scoringMode": "FIRST_TRY_ONLY",
   "stations": [
@@ -43,6 +43,7 @@ Example manifest shape:
           "prompt": "Which building is nearby?",
           "position": 0,
           "points": 150,
+          "type": "MULTIPLE_CHOICE",
           "options": [
             { "text": "Library", "position": 0, "isCorrect": true },
             { "text": "Gym", "position": 1, "isCorrect": false }
@@ -69,8 +70,7 @@ ZIP.
 ## Content And Identity
 
 The manifest contains authored reusable game content only: title, scoring mode,
-station order/text/media, multiple-choice task order/prompts/points, and ordered
-options with correctness. Version 1 has no game description field because the
+station order/text/media, task type, order, prompts, and points; multiple-choice options with correctness; true/false correct value; or a short-text correct answer. Version 1 has no game description field because the
 current app model has none.
 
 The archive deliberately omits database integer IDs, source game/station/task/
@@ -83,7 +83,7 @@ regenerated for each imported copy.
 
 ## Validation And Limits
 
-The reader accepts only `format = "qrhry"` and `formatVersion = 1`. It rejects
+The reader accepts only `format = "qrhry"` and versions 1 and 2. Version 1 tasks are interpreted as `MULTIPLE_CHOICE`; version 2 tasks require an explicit type and exactly the fields for that type. Unknown types and malformed type-specific data are rejected. It rejects
 unknown/missing JSON keys, incorrect JSON types, malformed UTF-8/JSON, invalid
 ordering, blank required text, negative points, invalid scoring modes, fewer
 than two stations, invalid option sets, duplicate media types per station,
@@ -128,12 +128,12 @@ hours, avoiding races with active imports. SQLite and the filesystem do not
 share an atomic commit; cleanup reconciles a process death between directory
 promotion and database commit.
 
-No database schema change is required by version 1.
+Version 2 exports are not readable by older app versions. The current app continues to import v1. SQLite task data is stored with schema v8.
 
 ## SOČ Demonstration
 
 1. Create a game with two ordered stations, one image, one audio file, a
-  multiple-choice task with non-default points, and `FIRST_TRY_ONLY` scoring.
+  multiple-choice, true/false, and short-text tasks with configured points, and `FIRST_TRY_ONLY` scoring.
 2. Export it through the Android document picker to a `.qrhry` file.
 3. Import that file as a new copy and confirm the preview's content summary and
   scoring mode.

@@ -1,7 +1,7 @@
 # Database
 
 The app uses raw SQLite through `SQLiteOpenHelper`; database operations are
-isolated in the data layer. The current schema version is 7.
+isolated in the data layer. The current schema version is 8.
 
 ## Core tables
 
@@ -53,7 +53,7 @@ and ordered progression.
 ### `tasks`
 
 UUID `id` primary key, `station_id` foreign key to `stations` with cascade,
-`type` constrained to `MULTIPLE_CHOICE`, nonblank `prompt`, nonnegative
+`type` constrained to `MULTIPLE_CHOICE`, `TRUE_FALSE`, or `SHORT_TEXT`, nonblank `prompt`, nonnegative
 `position`, nonnegative integer `points` (default 100), and
 `UNIQUE(station_id, position)`. Stations can have zero or more ordered tasks
 even though the initial editor exposes at most one.
@@ -69,11 +69,10 @@ exactly one correct option.
 ### `task_attempts`
 
 UUID `id`, `session_id` foreign key to `game_sessions` with cascade, `task_id`
-foreign key to `tasks` with restrict, `selected_option_id` (intentionally not a
-foreign key), selected-option and prompt text snapshots, nullable `correctness`,
+foreign key to `tasks` with restrict, `selected_option_id` (nullable and intentionally not a foreign key; null for true/false and short-text answers), selected-option and prompt text snapshots, nullable `correctness`,
 `selected_at`, nullable `submitted_at`, nonnegative `awarded_points` (default
 0), and `is_finalized` constrained to 0/1 (default 0). A null `submitted_at`
-denotes the persisted pending selection. A check
+denotes the persisted pending answer. True/false uses the answer snapshot tokens `TRUE`/`FALSE`; short text stores submitted text in the answer snapshot and is evaluated on submit. A check
 constraint requires pending rows to have null correctness and submitted rows to
 have a correctness value. A partial unique index allows at most one pending row
 per `(session_id, task_id)`; submitted wrong and correct attempts are retained.
@@ -116,7 +115,7 @@ a path is undefined; it never silently drops user data.
   Existing points and awards are preserved; prior incorrect answers remain
   retryable and prior correct answers remain completed.
 
-Fresh databases are created directly with the complete v7 schema. The v2→v3
+- **v7→v8** rebuilds tasks, options, and attempts to accept the two new task types and nullable `selected_option_id`. It copies task/option/attempt IDs, snapshots, timestamps, correctness, awards, and finalization flags, retaining the existing indexes and constraints. Existing task types remain `MULTIPLE_CHOICE`. The v2→v3
 migration deliberately creates the historical v3 visit shape so the following
 v4→v5 step can add `completed_at` exactly once before v5→v6 adds task points
 and v6→v7 adds scoring policies and explicit task finalization.

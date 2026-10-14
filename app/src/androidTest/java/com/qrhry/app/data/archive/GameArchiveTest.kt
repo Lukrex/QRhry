@@ -10,7 +10,13 @@ import com.qrhry.app.data.local.GameAssetStore
 import com.qrhry.app.data.local.GameDatabaseHelper
 import com.qrhry.app.data.local.ImportedAsset
 import com.qrhry.app.domain.GameDraft
+import com.qrhry.app.domain.MultipleChoiceTask
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
+import com.qrhry.app.domain.TrueFalseTaskDraft
+import com.qrhry.app.domain.ShortTextTaskDraft
+import com.qrhry.app.domain.TaskAnswer
+import com.qrhry.app.domain.TaskSubmissionResult
+import com.qrhry.app.domain.StationScanResult
 import com.qrhry.app.domain.StationDraft
 import com.qrhry.app.domain.StationMediaType
 import com.qrhry.app.domain.TaskOptionDraft
@@ -122,13 +128,13 @@ class GameArchiveTest {
         assertTrue(StationQrPayload.parse(StationQrPayload.create(imported.stations.first().qrToken) ) is QrPayloadParseResult.Valid)
         assertNotEquals(original.stations.first().tasks.single().id, imported.stations.first().tasks.single().id)
         assertNotEquals(
-            original.stations.first().tasks.single().options.first().id,
-            imported.stations.first().tasks.single().options.first().id
+            (original.stations.first().tasks.single() as MultipleChoiceTask).options.first().id,
+            (imported.stations.first().tasks.single() as MultipleChoiceTask).options.first().id
         )
         assertEquals(task.points, imported.stations.first().tasks.single().points)
         assertEquals(task.prompt, imported.stations.first().tasks.single().prompt)
-        assertEquals(task.options.map { it.text }, imported.stations.first().tasks.single().options.map { it.text })
-        assertEquals(task.options.map { it.isCorrect }, imported.stations.first().tasks.single().options.map { it.isCorrect })
+        assertEquals(task.options.map { it.text }, (imported.stations.first().tasks.single() as MultipleChoiceTask).options.map { it.text })
+        assertEquals(task.options.map { it.isCorrect }, (imported.stations.first().tasks.single() as MultipleChoiceTask).options.map { it.isCorrect })
         assertEquals(setOf(StationMediaType.IMAGE, StationMediaType.AUDIO), imported.stations.first().media.map { it.mediaType }.toSet())
         assertTrue(
             original.stations.first().media.map { it.id }.toSet()
@@ -157,6 +163,61 @@ class GameArchiveTest {
         gameUuids += duplicate.gameUuid
         assertNotEquals(imported.id, duplicate.id)
         assertNotEquals(imported.stations.first().qrToken, duplicate.stations.first().qrToken)
+    }
+
+    @Test
+    fun versionTwoRoundTripPreservesEveryTaskTypeAndTheyCanBePlayed() {
+        val mc = taskDraft()
+        val truth = TrueFalseTaskDraft(UUID.randomUUID().toString(), "The earth is round", 1, true, 20)
+        val text = ShortTextTaskDraft(UUID.randomUUID().toString(), "Capital of Slovakia", 2, "Bratislava", 30)
+        val original = repository.createGame(GameDraft(
+            "Typed game",
+            listOf(StationDraft("Start", "", listOf(mc, truth, text)), StationDraft("End", "")))
+        )
+        gameUuids += original.gameUuid
+        archiveService.exportGameToFile(original.id, archiveFile)
+        val preview = archiveService.inspectImport(Uri.fromFile(archiveFile))
+        val imported = archiveService.confirmImport(preview.token)
+        gameUuids += imported.gameUuid
+        val tasks = imported.stations.first().tasks
+        assertEquals(listOf("MULTIPLE_CHOICE", "TRUE_FALSE", "SHORT_TEXT"), tasks.map { it.type.name })
+
+        val session = repository.startOrResumeSession(imported.id).session
+        repository.recordStationScan(session.id, imported.stations.first().qrToken)
+        repository.savePendingTaskAnswer(session.id, tasks[0].id, TaskAnswer.Option((tasks[0] as MultipleChoiceTask).options.last().id))
+        assertTrue((repository.submitTaskAttempt(session.id, tasks[0].id) as TaskSubmissionResult.Submitted).isCorrect)
+        repository.savePendingTaskAnswer(session.id, tasks[1].id, TaskAnswer.BooleanValue(true))
+        assertTrue((repository.submitTaskAttempt(session.id, tasks[1].id) as TaskSubmissionResult.Submitted).isCorrect)
+        repository.savePendingTaskAnswer(session.id, tasks[2].id, TaskAnswer.TextValue("  BRATISLAVA "))
+        val final = repository.submitTaskAttempt(session.id, tasks[2].id) as TaskSubmissionResult.Submitted
+        assertTrue(final.isCorrect)
+        assertEquals(425L, final.progress.score)
+    }
+
+    @Test
+    fun versionOneArchiveStillImportsTasksAsMultipleChoice() {
+        val old = File(context.cacheDir, "qrhry-v1-${UUID.randomUUID()}.qrhry")
+        val firstTask = JSONObject().put("prompt", "Legacy prompt").put("position", 0).put("points", 7)
+            .put("options", JSONArray()
+                .put(JSONObject().put("text", "A").put("position", 0).put("isCorrect", true))
+                .put(JSONObject().put("text", "B").put("position", 1).put("isCorrect", false)))
+        val stations = JSONArray()
+            .put(JSONObject().put("title", "One").put("bodyText", "").put("position", 0)
+                .put("media", JSONArray()).put("tasks", JSONArray().put(firstTask)))
+            .put(JSONObject().put("title", "Two").put("bodyText", "").put("position", 1)
+                .put("media", JSONArray()).put("tasks", JSONArray()))
+        val manifest = JSONObject().put("format", "qrhry").put("formatVersion", 1).put("title", "Legacy")
+            .put("scoringMode", "EVENTUAL_CORRECT").put("stations", stations).toString()
+        writeZip(old, listOf(GameArchiveCodec.MANIFEST_ENTRY to manifest.toByteArray()))
+        try {
+            val preview = archiveService.inspectImport(Uri.fromFile(old))
+            val imported = archiveService.confirmImport(preview.token)
+            gameUuids += imported.gameUuid
+            assertTrue(imported.stations.first().tasks.single() is MultipleChoiceTask)
+            assertEquals("Legacy prompt", imported.stations.first().tasks.single().prompt)
+        } finally {
+            old.delete()
+        }
     }
 
     @Test

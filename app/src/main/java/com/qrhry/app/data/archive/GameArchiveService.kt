@@ -9,6 +9,11 @@ import com.qrhry.app.data.local.StagedGameAssets
 import com.qrhry.app.domain.Game
 import com.qrhry.app.domain.GameDraft
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
+import com.qrhry.app.domain.MultipleChoiceTask
+import com.qrhry.app.domain.TrueFalseTask
+import com.qrhry.app.domain.ShortTextTask
+import com.qrhry.app.domain.TrueFalseTaskDraft
+import com.qrhry.app.domain.ShortTextTaskDraft
 import com.qrhry.app.domain.StationDraft
 import com.qrhry.app.domain.StationMedia
 import com.qrhry.app.domain.TaskOptionDraft
@@ -74,14 +79,19 @@ class GameArchiveService(
                     position = station.position,
                     media = media,
                     tasks = station.tasks.map { task ->
-                        GameArchiveTask(
+                        when (task) {
+                            is MultipleChoiceTask -> GameArchiveTask(
                             prompt = task.prompt,
                             position = task.position,
                             points = task.points,
+                            type = task.type,
                             options = task.options.map { option ->
                                 GameArchiveOption(option.text, option.position, option.isCorrect)
                             }
-                        )
+                            )
+                            is TrueFalseTask -> GameArchiveTask(task.prompt, task.position, task.points, task.type, correctBoolean = task.correctAnswer)
+                            is ShortTextTask -> GameArchiveTask(task.prompt, task.position, task.points, task.type, correctText = task.correctAnswer)
+                        }
                     }
                 )
             }
@@ -177,20 +187,18 @@ class GameArchiveService(
                 title = station.title,
                 bodyText = station.bodyText,
                 tasks = station.tasks.map { task ->
-                    MultipleChoiceTaskDraft(
-                        id = UUID.randomUUID().toString(),
-                        prompt = task.prompt,
-                        position = task.position,
-                        points = task.points,
-                        options = task.options.map { option ->
-                            TaskOptionDraft(
-                                id = UUID.randomUUID().toString(),
-                                text = option.text,
-                                position = option.position,
-                                isCorrect = option.isCorrect
-                            )
-                        }
-                    )
+                    when (task.type) {
+                        com.qrhry.app.domain.StationTaskType.MULTIPLE_CHOICE -> MultipleChoiceTaskDraft(
+                            UUID.randomUUID().toString(), task.prompt, task.position,
+                            task.options.map { TaskOptionDraft(UUID.randomUUID().toString(), it.text, it.position, it.isCorrect) }, task.points
+                        )
+                        com.qrhry.app.domain.StationTaskType.TRUE_FALSE -> TrueFalseTaskDraft(
+                            UUID.randomUUID().toString(), task.prompt, task.position, checkNotNull(task.correctBoolean), task.points
+                        )
+                        com.qrhry.app.domain.StationTaskType.SHORT_TEXT -> ShortTextTaskDraft(
+                            UUID.randomUUID().toString(), task.prompt, task.position, checkNotNull(task.correctText), task.points
+                        )
+                    }
                 }
             )
         }

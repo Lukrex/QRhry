@@ -7,9 +7,9 @@ flow is:
 
 `Compose screen -> GameViewModel -> GameRepository -> GameDatabaseHelper -> SQLite`
 
-- `domain` contains game, station, multiple-choice task, option, visit, attempt,
+- `domain` contains game, station, typed task, option, visit, attempt,
   drafts, and validation models without Android or database dependencies.
-- `data.local.GameDatabaseHelper` owns schema version 7, foreign keys, indexes,
+- `data.local.GameDatabaseHelper` owns schema version 8, foreign keys, indexes,
   and sequential, non-destructive migrations.
 - `data.GameRepository` owns parameterized reads and transactional writes for
   game/station/task content, session progression, and scoring. It validates QR
@@ -21,7 +21,7 @@ flow is:
 - `ui.GameViewModel` coordinates screen state and runs repository work on
   `Dispatchers.IO`; Compose does not decide progression or write persistence.
 - `ui.GameScreen` renders game/station editing, QR scanning, station media, and
-  multiple-choice authoring and play.
+  multiple-choice, true/false, and short-text authoring and play.
 - Station images/audio are copied into app-private storage by `GameAssetStore`;
   SQLite stores their metadata and relative paths.
 - `qr.StationQrPayload` owns the versioned URI format and strict parser.
@@ -77,7 +77,7 @@ nullable columns on `stations` or opaque JSON.
 
 ## Portable game archives
 
-The `.qrhry` v1 format is a content-only ZIP with a JSON manifest and generated
+The `.qrhry` v2 format is a content-only ZIP with a JSON manifest and generated
 asset aliases. It excludes sessions, visits, attempts, and results. Import
 creates fresh local identities, including new station QR tokens, so it creates a
 new QR set rather than reusing a source game's printed codes. Archive parsing

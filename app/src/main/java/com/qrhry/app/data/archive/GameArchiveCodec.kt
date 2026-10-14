@@ -1,6 +1,7 @@
 package com.qrhry.app.data.archive
 
 import com.qrhry.app.domain.StationMediaType
+import com.qrhry.app.domain.StationTaskType
 import com.qrhry.app.domain.TaskScoringMode
 import com.qrhry.app.domain.UserMessageException
 import com.qrhry.app.domain.UserMessageKey
@@ -85,6 +86,9 @@ class GameArchiveCodec {
 
     fun write(bundle: GameArchiveBundle, archiveFile: File) {
         try {
+            if (bundle.manifest.formatVersion != GameArchiveLimits.CURRENT_FORMAT_VERSION) {
+                throw UserMessageException(UserMessageKey.ARCHIVE_VERSION_UNSUPPORTED)
+            }
             validateManifest(bundle.manifest)
             val descriptors = bundle.manifest.stations.flatMap { it.media }
             if (descriptors.map { it.entryPath }.toSet() != bundle.mediaFiles.keys) mediaInvalid()
@@ -128,7 +132,7 @@ class GameArchiveCodec {
         val root = JSONObject(json).requireKeys("format", "formatVersion", "title", "scoringMode", "stations")
         if (root.requiredString("format") != FORMAT_NAME) invalidArchive()
         val version = root.requiredInt("formatVersion")
-        if (version != GameArchiveLimits.CURRENT_FORMAT_VERSION) {
+        if (version !in 1..GameArchiveLimits.CURRENT_FORMAT_VERSION) {
             throw UserMessageException(UserMessageKey.ARCHIVE_VERSION_UNSUPPORTED)
         }
         val manifest = GameArchiveManifest(
@@ -156,13 +160,18 @@ class GameArchiveCodec {
                         )
                     },
                     tasks = station.requiredArray("tasks", GameArchiveLimits.MAX_TASKS_PER_STATION).map { taskValue ->
-                        val task = (taskValue as? JSONObject)?.requireKeys("prompt", "position", "points", "options")
-                            ?: invalidArchive()
-                        GameArchiveTask(
-                            prompt = task.requiredString("prompt"),
-                            position = task.requiredInt("position"),
-                            points = task.requiredInt("points"),
-                            options = task.requiredArray("options", GameArchiveLimits.MAX_OPTIONS_PER_TASK).map { optionValue ->
+                        val rawTask = taskValue as? JSONObject ?: invalidArchive()
+                        val task = if (version == 1) rawTask.requireKeys("prompt", "position", "points", "options")
+                        else rawTask
+                        val type = if (version == 1) StationTaskType.MULTIPLE_CHOICE
+                        else task.requiredEnum("type", StationTaskType.entries.toTypedArray())
+                        val expectedKeys = when (type) {
+                            StationTaskType.MULTIPLE_CHOICE -> if (version == 1) setOf("prompt", "position", "points", "options") else setOf("prompt", "position", "points", "type", "options")
+                            StationTaskType.TRUE_FALSE -> setOf("prompt", "position", "points", "type", "correctAnswer")
+                            StationTaskType.SHORT_TEXT -> setOf("prompt", "position", "points", "type", "correctAnswer")
+                        }
+                        task.requireKeys(*expectedKeys.toTypedArray())
+                        val options = if (type == StationTaskType.MULTIPLE_CHOICE) task.requiredArray("options", GameArchiveLimits.MAX_OPTIONS_PER_TASK).map { optionValue ->
                                 val option = (optionValue as? JSONObject)?.requireKeys("text", "position", "isCorrect")
                                     ?: invalidArchive()
                                 GameArchiveOption(
@@ -170,7 +179,20 @@ class GameArchiveCodec {
                                     position = option.requiredInt("position"),
                                     isCorrect = option.requiredBoolean("isCorrect")
                                 )
-                            }
+                            } else emptyList()
+                        val answer = when (type) {
+                            StationTaskType.TRUE_FALSE -> task.requiredBoolean("correctAnswer")
+                            StationTaskType.SHORT_TEXT -> task.requiredString("correctAnswer")
+                            else -> null
+                        }
+                        GameArchiveTask(
+                            prompt = task.requiredString("prompt"),
+                            position = task.requiredInt("position"),
+                            points = task.requiredInt("points"),
+                            type = type,
+                            options = options,
+                            correctBoolean = answer as? Boolean,
+                            correctText = answer as? String
                         )
                     }
                 ).also { if (it.position != index) invalidArchive() }
@@ -181,7 +203,7 @@ class GameArchiveCodec {
     }
 
     private fun validateManifest(manifest: GameArchiveManifest) {
-        if (manifest.formatVersion != GameArchiveLimits.CURRENT_FORMAT_VERSION) {
+        if (manifest.formatVersion !in 1..GameArchiveLimits.CURRENT_FORMAT_VERSION) {
             throw UserMessageException(UserMessageKey.ARCHIVE_VERSION_UNSUPPORTED)
         }
         if (manifest.title.isBlank() || manifest.title.length > MAX_TEXT_LENGTH) invalidArchive()
@@ -211,11 +233,18 @@ class GameArchiveCodec {
                 if (task.position != taskIndex || task.prompt.isBlank() || task.prompt.length > MAX_TEXT_LENGTH || task.points < 0) {
                     invalidArchive()
                 }
-                if (task.options.size !in 2..GameArchiveLimits.MAX_OPTIONS_PER_TASK) limitExceeded()
-                if (task.options.map { it.position } != task.options.indices.toList() ||
-                    task.options.any { it.text.isBlank() || it.text.length > MAX_TEXT_LENGTH } ||
-                    task.options.count { it.isCorrect } != 1
-                ) invalidArchive()
+                when (task.type) {
+                    StationTaskType.MULTIPLE_CHOICE -> {
+                        if (task.options.size !in 2..GameArchiveLimits.MAX_OPTIONS_PER_TASK) limitExceeded()
+                        if (task.correctBoolean != null || task.correctText != null ||
+                            task.options.map { it.position } != task.options.indices.toList() ||
+                            task.options.any { it.text.isBlank() || it.text.length > MAX_TEXT_LENGTH } ||
+                            task.options.count { it.isCorrect } != 1
+                        ) invalidArchive()
+                    }
+                    StationTaskType.TRUE_FALSE -> if (task.correctBoolean == null || task.correctText != null || task.options.isNotEmpty()) invalidArchive()
+                    StationTaskType.SHORT_TEXT -> if (task.correctText.isNullOrBlank() || task.correctBoolean != null || task.options.isNotEmpty()) invalidArchive()
+                }
             }
         }
         if (taskCount > MAX_TOTAL_TASKS) limitExceeded()
@@ -253,13 +282,17 @@ class GameArchiveCodec {
                             .put("isCorrect", option.isCorrect)
                     )
                 }
-                tasks.put(
-                    JSONObject()
+                val encoded = JSONObject()
                         .put("prompt", task.prompt)
                         .put("position", task.position)
                         .put("points", task.points)
-                        .put("options", options)
-                )
+                        .put("type", task.type.name)
+                when (task.type) {
+                    StationTaskType.MULTIPLE_CHOICE -> encoded.put("options", options)
+                    StationTaskType.TRUE_FALSE -> encoded.put("correctAnswer", task.correctBoolean)
+                    StationTaskType.SHORT_TEXT -> encoded.put("correctAnswer", task.correctText)
+                }
+                tasks.put(encoded)
             }
             stations.put(
                 JSONObject()

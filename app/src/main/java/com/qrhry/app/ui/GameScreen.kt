@@ -59,6 +59,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -105,9 +107,17 @@ import com.qrhry.app.domain.StationDraft
 import com.qrhry.app.domain.StationMediaType
 import com.qrhry.app.domain.MultipleChoiceTask
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
+import com.qrhry.app.domain.ShortTextTask
+import com.qrhry.app.domain.ShortTextTaskDraft
+import com.qrhry.app.domain.StationTask
+import com.qrhry.app.domain.StationTaskDraft
+import com.qrhry.app.domain.StationTaskType
+import com.qrhry.app.domain.TaskAnswer
 import com.qrhry.app.domain.TaskOptionDraft
 import com.qrhry.app.domain.TaskProgress
 import com.qrhry.app.domain.TaskScoringMode
+import com.qrhry.app.domain.TrueFalseTask
+import com.qrhry.app.domain.TrueFalseTaskDraft
 import com.qrhry.app.domain.UserMessageKey
 import com.qrhry.app.R
 import com.qrhry.app.qr.StationQrCodeGenerator
@@ -117,6 +127,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.DateFormat
@@ -128,7 +139,7 @@ private data class StationFormState(
     val bodyText: String = "",
     val imageUri: Uri? = null,
     val audioUri: Uri? = null,
-    val task: MultipleChoiceTaskFormState? = null
+    val task: TaskFormState? = null
 )
 
 private data class TaskOptionFormState(
@@ -137,29 +148,41 @@ private data class TaskOptionFormState(
     val isCorrect: Boolean = false
 )
 
-private data class MultipleChoiceTaskFormState(
+private data class TaskFormState(
     val id: String = UUID.randomUUID().toString(),
     val prompt: String = "",
     val pointsText: String = "100",
-    val options: List<TaskOptionFormState> = listOf(TaskOptionFormState(), TaskOptionFormState())
+    val type: StationTaskType = StationTaskType.MULTIPLE_CHOICE,
+    val options: List<TaskOptionFormState> = listOf(TaskOptionFormState(), TaskOptionFormState()),
+    val trueFalseCorrect: Boolean = true,
+    val shortAnswer: String = ""
 )
 
-private fun MultipleChoiceTaskFormState.toDraft(position: Int) = MultipleChoiceTaskDraft(
-    id = id,
-    prompt = prompt,
-    position = position,
-    points = pointsText.toIntOrNull() ?: -1,
-    options = options.mapIndexed { index, option ->
-        TaskOptionDraft(option.id, option.text, index, option.isCorrect)
+private fun TaskFormState.toDraft(position: Int): StationTaskDraft {
+    val points = pointsText.toIntOrNull() ?: -1
+    return when (type) {
+        StationTaskType.MULTIPLE_CHOICE -> MultipleChoiceTaskDraft(
+            id, prompt, position,
+            options.mapIndexed { index, option -> TaskOptionDraft(option.id, option.text, index, option.isCorrect) },
+            points
+        )
+        StationTaskType.TRUE_FALSE -> TrueFalseTaskDraft(id, prompt, position, trueFalseCorrect, points)
+        StationTaskType.SHORT_TEXT -> ShortTextTaskDraft(id, prompt, position, shortAnswer, points)
     }
-)
+}
 
-private fun MultipleChoiceTask.toFormState() = MultipleChoiceTaskFormState(
-    id = id,
-    prompt = prompt,
-    pointsText = points.toString(),
-    options = options.map { TaskOptionFormState(it.id, it.text, it.isCorrect) }
-)
+private fun StationTask.toFormState(): TaskFormState = when (this) {
+    is MultipleChoiceTask -> TaskFormState(
+        id = id, prompt = prompt, pointsText = points.toString(), type = type,
+        options = options.map { TaskOptionFormState(it.id, it.text, it.isCorrect) }
+    )
+    is TrueFalseTask -> TaskFormState(
+        id = id, prompt = prompt, pointsText = points.toString(), type = type, trueFalseCorrect = correctAnswer
+    )
+    is ShortTextTask -> TaskFormState(
+        id = id, prompt = prompt, pointsText = points.toString(), type = type, shortAnswer = correctAnswer
+    )
+}
 
 private data class PendingMediaPick(
     val mediaType: StationMediaType,
@@ -171,7 +194,7 @@ private data class StationEditorDraftState(
     val bodyText: String,
     val imageUri: Uri?,
     val audioUri: Uri?,
-    val tasks: List<MultipleChoiceTaskFormState>
+    val tasks: List<TaskFormState>
 )
 
 private class DraftTokenReader(private val values: List<String>) {
@@ -181,11 +204,15 @@ private class DraftTokenReader(private val values: List<String>) {
     fun nextInt(): Int = next().toInt()
     fun nextUri(): Uri? = next().takeIf(String::isNotEmpty)?.let(Uri::parse)
 
-    fun nextTask(): MultipleChoiceTaskFormState? {
+    fun nextTask(): TaskFormState? {
         if (next() != "1") return null
         val taskId = next()
         val prompt = next()
         val pointsText = next()
+        val type = runCatching { StationTaskType.valueOf(next()) }
+            .getOrDefault(StationTaskType.MULTIPLE_CHOICE)
+        val trueFalseCorrect = next().toBoolean()
+        val shortAnswer = next()
         val options = List(nextInt()) {
             TaskOptionFormState(
                 id = next(),
@@ -193,18 +220,21 @@ private class DraftTokenReader(private val values: List<String>) {
                 isCorrect = next().toBoolean()
             )
         }
-        return MultipleChoiceTaskFormState(taskId, prompt, pointsText, options)
+        return TaskFormState(taskId, prompt, pointsText, type, options, trueFalseCorrect, shortAnswer)
     }
 
-    fun nextRequiredTask(): MultipleChoiceTaskFormState = checkNotNull(nextTask())
+    fun nextRequiredTask(): TaskFormState = checkNotNull(nextTask())
 }
 
-private fun MutableList<String>.appendTask(task: MultipleChoiceTaskFormState?) {
+private fun MutableList<String>.appendTask(task: TaskFormState?) {
     add(if (task == null) "0" else "1")
     if (task == null) return
     add(task.id)
     add(task.prompt)
     add(task.pointsText)
+    add(task.type.name)
+    add(task.trueFalseCorrect.toString())
+    add(task.shortAnswer)
     add(task.options.size.toString())
     task.options.forEach { option ->
         add(option.id)
@@ -374,7 +404,7 @@ fun GameScreen(
                 isLoading = state.isLoadingSession,
                 isSubmittingAnswer = state.isSavingTaskAnswer,
                 taskSkippedFeedback = state.taskSkippedFeedback,
-                onSelectOption = viewModel::selectTaskOption,
+                onSelectOption = viewModel::savePendingTaskAnswer,
                 onSubmitTask = viewModel::submitTaskAnswer,
                 onContinueTask = viewModel::continueTaskAfterWrongAnswer,
                 onScan = viewModel::openSessionScanner,
@@ -721,6 +751,8 @@ private fun userMessageText(key: UserMessageKey): String = stringResource(
         UserMessageKey.OPTION_TEXT_REQUIRED -> R.string.error_option_text_required
         UserMessageKey.EXACTLY_ONE_CORRECT_OPTION_REQUIRED -> R.string.error_one_correct_option
         UserMessageKey.OPTION_ID_INVALID -> R.string.error_option_identity
+        UserMessageKey.TEXT_ANSWER_REQUIRED -> R.string.error_text_answer_required
+        UserMessageKey.TASK_DEFINITION_INVALID -> R.string.error_task_definition_invalid
         UserMessageKey.TASK_POINTS_INVALID -> R.string.error_task_points
         UserMessageKey.GAME_UNAVAILABLE -> R.string.error_game_unavailable
         UserMessageKey.GAME_HAS_NO_STATIONS -> R.string.error_game_no_stations
@@ -735,6 +767,7 @@ private fun userMessageText(key: UserMessageKey): String = stringResource(
         UserMessageKey.SELECT_ANSWER_FIRST -> R.string.error_select_answer
         UserMessageKey.TASK_EDIT_ACTIVE_SESSION -> R.string.error_task_edit_active
         UserMessageKey.TASK_DELETE_HAS_ATTEMPTS -> R.string.error_task_delete_attempts
+        UserMessageKey.TASK_TYPE_CHANGE_HAS_ATTEMPTS -> R.string.error_task_type_change_attempts
         UserMessageKey.MEDIA_GAME_ID_INVALID -> R.string.error_media_game_identity
         UserMessageKey.MEDIA_TYPE_UNKNOWN -> R.string.error_media_type_unknown
         UserMessageKey.MEDIA_TYPE_UNSUPPORTED -> R.string.error_media_type_unsupported
@@ -914,7 +947,7 @@ private fun GameLibraryScreen(
                         if (form.task == null) {
                             OutlinedButton(onClick = {
                                 stationForms = stationForms.updated(index) {
-                                    it.copy(task = MultipleChoiceTaskFormState())
+                                    it.copy(task = TaskFormState())
                                 }
                             }) { IconLabel(QRhryIconKind.TASK, stringResource(R.string.add_multiple_choice_task)) }
                         } else {
@@ -1145,8 +1178,8 @@ private fun PlaySessionScreen(
     isLoading: Boolean,
     isSubmittingAnswer: Boolean,
     taskSkippedFeedback: Boolean,
-    onSelectOption: (String, String) -> Unit,
-    onSubmitTask: (String) -> Unit,
+    onSelectOption: (String, TaskAnswer) -> Unit,
+    onSubmitTask: (String, TaskAnswer?) -> Unit,
     onContinueTask: (String) -> Unit,
     onScan: () -> Unit,
     onBack: () -> Unit
@@ -1269,8 +1302,8 @@ private fun PlaySessionScreen(
                     MultipleChoiceTaskPlayer(
                         progress = taskProgress,
                         isSubmitting = isSubmittingAnswer,
-                        onSelectOption = { optionId -> onSelectOption(taskProgress.task.id, optionId) },
-                        onSubmit = { onSubmitTask(taskProgress.task.id) },
+                        onSelectAnswer = { answer -> onSelectOption(taskProgress.task.id, answer) },
+                        onSubmit = { answer -> onSubmitTask(taskProgress.task.id, answer) },
                         onContinue = { onContinueTask(taskProgress.task.id) }
                     )
                 }
@@ -1484,7 +1517,7 @@ private fun StationEditScreen(
     error: UserMessageKey?,
     onPickMedia: (StationMediaType, (Uri) -> Unit) -> Unit,
     onRemoveMedia: (Long, StationMediaType) -> Unit,
-    onSave: (Long, String, String, Uri?, Uri?, List<MultipleChoiceTaskDraft>) -> Unit,
+    onSave: (Long, String, String, Uri?, Uri?, List<StationTaskDraft>) -> Unit,
     onCancel: () -> Unit
 ) {
     var draft by rememberSaveable(station.id, stateSaver = stationEditorDraftSaver) {
@@ -1570,7 +1603,7 @@ private fun StationEditScreen(
             )
         }
         if (tasks.isEmpty()) {
-            OutlinedButton(onClick = { draft = draft.copy(tasks = listOf(MultipleChoiceTaskFormState())) }) {
+            OutlinedButton(onClick = { draft = draft.copy(tasks = listOf(TaskFormState())) }) {
                 IconLabel(QRhryIconKind.TASK, stringResource(R.string.add_task))
             }
         }
@@ -1669,12 +1702,19 @@ private fun StationQrImage(station: Station, modifier: Modifier = Modifier) {
 
 @Composable
 private fun MultipleChoiceTaskEditor(
-    task: MultipleChoiceTaskFormState,
-    onChange: (MultipleChoiceTaskFormState) -> Unit,
+    task: TaskFormState,
+    onChange: (TaskFormState) -> Unit,
     onRemove: () -> Unit
 ) {
     val moveUpLabel = stringResource(R.string.move_up)
     val moveDownLabel = stringResource(R.string.move_down)
+    var typeMenuExpanded by remember { mutableStateOf(false) }
+    var requestedType by remember { mutableStateOf<StationTaskType?>(null) }
+    val taskTypeLabel = when (task.type) {
+        StationTaskType.MULTIPLE_CHOICE -> stringResource(R.string.multiple_choice_task)
+        StationTaskType.TRUE_FALSE -> stringResource(R.string.task_type_true_false)
+        StationTaskType.SHORT_TEXT -> stringResource(R.string.task_type_short_text)
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
@@ -1690,13 +1730,30 @@ private fun MultipleChoiceTaskEditor(
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     QRhryIcon(QRhryIconKind.TASK, size = 20.dp, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.multiple_choice_task), style = MaterialTheme.typography.titleMedium)
+                    Text(taskTypeLabel, style = MaterialTheme.typography.titleMedium)
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(
                         onClick = onRemove,
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) { IconLabel(QRhryIconKind.REMOVE, stringResource(R.string.remove_task), MaterialTheme.colorScheme.error) }
+                }
+            }
+            Box {
+                OutlinedButton(onClick = { typeMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(taskTypeLabel)
+                }
+                DropdownMenu(expanded = typeMenuExpanded, onDismissRequest = { typeMenuExpanded = false }) {
+                    listOf(
+                        StationTaskType.MULTIPLE_CHOICE to R.string.multiple_choice_task,
+                        StationTaskType.TRUE_FALSE to R.string.task_type_true_false,
+                        StationTaskType.SHORT_TEXT to R.string.task_type_short_text
+                    ).forEach { (type, label) ->
+                        DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = {
+                            typeMenuExpanded = false
+                            if (type != task.type) requestedType = type
+                        })
+                    }
                 }
             }
             OutlinedTextField(
@@ -1715,7 +1772,7 @@ private fun MultipleChoiceTaskEditor(
                 singleLine = true
             )
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (task.type == StationTaskType.MULTIPLE_CHOICE) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     QRhryIcon(QRhryIconKind.TASK, size = 18.dp, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
@@ -1809,8 +1866,40 @@ private fun MultipleChoiceTaskEditor(
                     onClick = { onChange(task.copy(options = task.options + TaskOptionFormState())) },
                     modifier = Modifier.fillMaxWidth()
                 ) { IconLabel(QRhryIconKind.ADD, stringResource(R.string.add_option)) }
+            } else if (task.type == StationTaskType.TRUE_FALSE) {
+                Text(stringResource(R.string.select_correct_answer), style = MaterialTheme.typography.bodySmall)
+                listOf(true to R.string.true_answer, false to R.string.false_answer).forEach { (value, label) ->
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        RadioButton(selected = task.trueFalseCorrect == value, onClick = {
+                            onChange(task.copy(trueFalseCorrect = value))
+                        })
+                        Text(stringResource(label))
+                    }
+                }
+            } else {
+                OutlinedTextField(
+                    value = task.shortAnswer,
+                    onValueChange = { onChange(task.copy(shortAnswer = it)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.correct_answer_label)) },
+                    singleLine = true
+                )
             }
         }
+    }
+    requestedType?.let { newType ->
+        AlertDialog(
+            onDismissRequest = { requestedType = null },
+            title = { Text(stringResource(R.string.change_task_type_title)) },
+            text = { Text(stringResource(R.string.change_task_type_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onChange(task.copy(type = newType))
+                    requestedType = null
+                }) { Text(stringResource(R.string.change_task_type_confirm)) }
+            },
+            dismissButton = { TextButton(onClick = { requestedType = null }) { Text(stringResource(R.string.cancel)) } }
+        )
     }
 }
 
@@ -1818,10 +1907,23 @@ private fun MultipleChoiceTaskEditor(
 private fun MultipleChoiceTaskPlayer(
     progress: TaskProgress,
     isSubmitting: Boolean,
-    onSelectOption: (String) -> Unit,
-    onSubmit: () -> Unit,
+    onSelectAnswer: (TaskAnswer) -> Unit,
+    onSubmit: (TaskAnswer?) -> Unit,
     onContinue: () -> Unit
 ) {
+    var textAnswer by rememberSaveable(progress.task.id) {
+        mutableStateOf(progress.pendingAttempt?.selectedOptionTextSnapshot.orEmpty())
+    }
+    LaunchedEffect(progress.pendingAttempt?.selectedOptionTextSnapshot) {
+        val saved = progress.pendingAttempt?.selectedOptionTextSnapshot
+        if (progress.task is ShortTextTask && saved != null && saved != textAnswer) textAnswer = saved
+    }
+    LaunchedEffect(progress.task.id, textAnswer, progress.isCompleted) {
+        if (progress.task is ShortTextTask && !progress.isCompleted) {
+            delay(250)
+            onSelectAnswer(TaskAnswer.TextValue(textAnswer))
+        }
+    }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(progress.task.prompt, style = MaterialTheme.typography.titleLarge)
@@ -1854,27 +1956,52 @@ private fun MultipleChoiceTaskPlayer(
                 ) {
                     StatusMessage(stringResource(R.string.incorrect_choose_again), isError = true)
                 }
-                progress.task.options.forEach { option ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().height(52.dp).selectable(
-                            selected = progress.pendingAttempt?.selectedOptionId == option.id,
-                            onClick = { onSelectOption(option.id) },
-                            enabled = !isSubmitting,
-                            role = Role.RadioButton
-                        ),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = progress.pendingAttempt?.selectedOptionId == option.id,
-                            onClick = null,
-                            enabled = !isSubmitting
-                        )
-                        Text(option.text)
+                when (val task = progress.task) {
+                    is MultipleChoiceTask -> task.options.forEach { option ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().height(52.dp).selectable(
+                                selected = progress.pendingAttempt?.selectedOptionId == option.id,
+                                onClick = { onSelectAnswer(TaskAnswer.Option(option.id)) },
+                                enabled = !isSubmitting,
+                                role = Role.RadioButton
+                            ),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = progress.pendingAttempt?.selectedOptionId == option.id,
+                                onClick = null,
+                                enabled = !isSubmitting
+                            )
+                            Text(option.text)
+                        }
                     }
+                    is TrueFalseTask -> listOf(true to R.string.true_answer, false to R.string.false_answer).forEach { (value, label) ->
+                        OutlinedButton(
+                            onClick = { onSelectAnswer(TaskAnswer.BooleanValue(value)) },
+                            enabled = !isSubmitting,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (progress.pendingAttempt?.selectedOptionTextSnapshot == if (value) "TRUE" else "FALSE") {
+                                QRhryIcon(QRhryIconKind.CHECK)
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(stringResource(label))
+                        }
+                    }
+                    is ShortTextTask -> OutlinedTextField(
+                        value = textAnswer,
+                        onValueChange = { textAnswer = it },
+                        enabled = !isSubmitting,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.short_answer_hint)) },
+                        singleLine = true
+                    )
                 }
                 Button(
-                    onClick = onSubmit,
-                    enabled = progress.pendingAttempt != null && !isSubmitting,
+                    onClick = {
+                        onSubmit(if (progress.task is ShortTextTask) TaskAnswer.TextValue(textAnswer) else null)
+                    },
+                    enabled = (progress.pendingAttempt != null || (progress.task is ShortTextTask && textAnswer.isNotBlank())) && !isSubmitting,
                     modifier = Modifier.fillMaxWidth()
                 ) { IconLabel(QRhryIconKind.CHECK, stringResource(if (isSubmitting) R.string.submitting else R.string.submit_answer)) }
                 if (progress.hasIncorrectSubmission) {

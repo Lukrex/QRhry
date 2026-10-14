@@ -7,10 +7,17 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.qrhry.app.data.local.GameDatabaseHelper
 import com.qrhry.app.domain.GameDraft
 import com.qrhry.app.domain.GameSessionStatus
+import com.qrhry.app.domain.MultipleChoiceTask
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
 import com.qrhry.app.domain.StationDraft
 import com.qrhry.app.domain.StationScanResult
 import com.qrhry.app.domain.TaskOptionDraft
+import com.qrhry.app.domain.StationTaskDraft
+import com.qrhry.app.domain.TrueFalseTaskDraft
+import com.qrhry.app.domain.ShortTextTaskDraft
+import com.qrhry.app.domain.TaskAnswer
+import com.qrhry.app.domain.TrueFalseTask
+import com.qrhry.app.domain.ShortTextTask
 import com.qrhry.app.domain.TaskScoringMode
 import com.qrhry.app.domain.TaskSubmissionResult
 import org.junit.After
@@ -53,9 +60,9 @@ class GameTaskRepositoryTest {
         val loaded = checkNotNull(repository.getGame(game.id)).stations.first().tasks
 
         assertEquals(listOf(firstTask.id, secondTask.id), loaded.map { it.id })
-        assertEquals(listOf("A", "B", "C"), loaded.first().options.map { it.text })
-        assertEquals(listOf(0, 1, 2), loaded.first().options.map { it.position })
-        assertEquals(1, loaded.first().options.count { it.isCorrect })
+        assertEquals(listOf("A", "B", "C"), (loaded.first() as MultipleChoiceTask).options.map { it.text })
+        assertEquals(listOf(0, 1, 2), (loaded.first() as MultipleChoiceTask).options.map { it.position })
+        assertEquals(1, (loaded.first() as MultipleChoiceTask).options.count { it.isCorrect })
         assertEquals(100, loaded.first().points)
     }
 
@@ -79,7 +86,7 @@ class GameTaskRepositoryTest {
 
         val loadedTask = checkNotNull(repository.getGame(game.id)).stations.first().tasks.single()
         assertEquals(original.id, loadedTask.id)
-        assertEquals(listOf(original.options[2].id, original.options[0].id), loadedTask.options.map { it.id })
+        assertEquals(listOf(original.options[2].id, original.options[0].id), (loadedTask as MultipleChoiceTask).options.map { it.id })
         assertEquals(listOf("C", "A"), loadedTask.options.map { it.text })
         assertEquals(listOf(0, 1), loadedTask.options.map { it.position })
         assertEquals(275, loadedTask.points)
@@ -123,7 +130,7 @@ class GameTaskRepositoryTest {
     fun databaseRejectsTwoCorrectOptionsForOneTask() {
         val task = task("Question")
         val game = createGame(listOf(task))
-        val options = game.stations.first().tasks.single().options
+        val options = (game.stations.first().tasks.single() as MultipleChoiceTask).options
         databaseHelper.writableDatabase.execSQL(
             "UPDATE task_options SET is_correct = 1 WHERE id = ?",
             arrayOf(options.first { !it.isCorrect }.id)
@@ -182,7 +189,7 @@ class GameTaskRepositoryTest {
         val game = createGame(listOf(task("Question")))
         val session = repository.startOrResumeSession(game.id)
         repository.recordStationScan(session.session.id, game.stations.first().qrToken)
-        val task = game.stations.first().tasks.single()
+        val task = game.stations.first().tasks.single() as MultipleChoiceTask
         repository.savePendingTaskSelection(session.session.id, task.id, task.options.first().id)
         databaseHelper.close()
 
@@ -543,7 +550,7 @@ class GameTaskRepositoryTest {
 
         assertEquals(100, game.stations.first().tasks.single().points)
         assertEquals("Legacy prompt", game.stations.first().tasks.single().prompt)
-        assertEquals(listOf("Wrong", "Correct"), game.stations.first().tasks.single().options.map { it.text })
+        assertEquals(listOf("Wrong", "Correct"), (game.stations.first().tasks.single() as MultipleChoiceTask).options.map { it.text })
         assertEquals("media-id", game.stations.first().media.single().id)
         assertEquals(1, active.resultTotalTaskCount)
         assertEquals(2, active.resultTotalStationCount)
@@ -645,8 +652,129 @@ class GameTaskRepositoryTest {
         assertNotNull(otherGame)
     }
 
+    @Test
+    fun trueFalseAndShortTextTasksPersistAndAreScoredAfterEvaluation() {
+        val truth = TrueFalseTaskDraft(UUID.randomUUID().toString(), "Is the sky blue?", 0, true, 60)
+        val text = ShortTextTaskDraft(UUID.randomUUID().toString(), "Name the city", 1, "  Žilina  ", 90)
+        val game = createGame(listOf(truth, text))
+        val loaded = checkNotNull(repository.getGame(game.id)).stations.first().tasks
+        assertTrue(loaded[0] is TrueFalseTask)
+        assertTrue(loaded[1] is ShortTextTask)
+        assertEquals("Žilina", (loaded[1] as ShortTextTask).correctAnswer)
+
+        val session = repository.startOrResumeSession(game.id)
+        repository.recordStationScan(session.session.id, game.stations.first().qrToken)
+        repository.savePendingTaskAnswer(session.session.id, truth.id, TaskAnswer.BooleanValue(false))
+        val wrong = repository.submitTaskAttempt(session.session.id, truth.id) as TaskSubmissionResult.Submitted
+        assertFalse(wrong.isCorrect)
+        assertEquals(0L, wrong.progress.score)
+        repository.savePendingTaskAnswer(session.session.id, truth.id, TaskAnswer.BooleanValue(true))
+        val right = repository.submitTaskAttempt(session.session.id, truth.id) as TaskSubmissionResult.Submitted
+        assertTrue(right.isCorrect)
+        assertEquals(60L, right.progress.score)
+
+        repository.savePendingTaskAnswer(session.session.id, text.id, TaskAnswer.TextValue("  ŽILINA  "))
+        val textRight = repository.submitTaskAttempt(session.session.id, text.id) as TaskSubmissionResult.Submitted
+        assertTrue(textRight.isCorrect)
+        assertEquals(150L, textRight.progress.score)
+        assertEquals(2, textRight.progress.completedTaskCount)
+    }
+
+    @Test
+    fun editingTrueFalseAndShortTextDefinitionsPersistsNewCorrectAnswers() {
+        val truth = TrueFalseTaskDraft(UUID.randomUUID().toString(), "Original", 0, true, 5)
+        val text = ShortTextTaskDraft(UUID.randomUUID().toString(), "Original text", 1, "Old", 8)
+        val game = createGame(listOf(truth, text))
+        val station = game.stations.first()
+        repository.updateStationContent(
+            stationId = station.id,
+            title = station.title,
+            bodyText = station.bodyText,
+            tasks = listOf(truth.copy(prompt = "Updated", correctAnswer = false), text.copy(correctAnswer = " New "))
+        )
+        val tasks = checkNotNull(repository.getGame(game.id)).stations.first().tasks
+        assertEquals("Updated", tasks[0].prompt)
+        assertFalse((tasks[0] as TrueFalseTask).correctAnswer)
+        assertEquals("New", (tasks[1] as ShortTextTask).correctAnswer)
+        assertEquals(listOf(5, 8), tasks.map { it.points })
+    }
+
+    @Test
+    fun falseCorrectAnswerHonorsFirstTryOnlyScoring() {
+        val truth = TrueFalseTaskDraft(UUID.randomUUID().toString(), "Statement", 0, false, 40)
+        val game = createGame(listOf(truth), TaskScoringMode.FIRST_TRY_ONLY)
+        val session = repository.startOrResumeSession(game.id).session
+        repository.recordStationScan(session.id, game.stations.first().qrToken)
+        repository.savePendingTaskAnswer(session.id, truth.id, TaskAnswer.BooleanValue(true))
+        assertFalse((repository.submitTaskAttempt(session.id, truth.id) as TaskSubmissionResult.Submitted).isCorrect)
+        repository.savePendingTaskAnswer(session.id, truth.id, TaskAnswer.BooleanValue(false))
+        val correct = repository.submitTaskAttempt(session.id, truth.id) as TaskSubmissionResult.Submitted
+        assertTrue(correct.isCorrect)
+        assertEquals(0, correct.pointsAwarded)
+        assertEquals(0L, correct.progress.score)
+    }
+
+    @Test
+    fun shortTextAnswerPreservesDiacriticsAndPendingValueRestores() {
+        val text = ShortTextTaskDraft(UUID.randomUUID().toString(), "Say café", 0, "café", 15)
+        val game = createGame(listOf(text))
+        val session = repository.startOrResumeSession(game.id)
+        repository.recordStationScan(session.session.id, game.stations.first().qrToken)
+        repository.savePendingTaskAnswer(session.session.id, text.id, TaskAnswer.TextValue("cafe"))
+        val pending = checkNotNull(repository.getSessionProgress(session.session.id)).taskProgress.single()
+        assertEquals("cafe", pending.pendingAttempt?.selectedOptionTextSnapshot)
+        databaseHelper.close()
+        databaseHelper = GameDatabaseHelper(context, databaseName)
+        repository = GameRepository(databaseHelper)
+        val restored = checkNotNull(repository.getSessionProgress(session.session.id))
+        assertEquals("cafe", restored.taskProgress.single().pendingAttempt?.selectedOptionTextSnapshot)
+        val result = repository.submitTaskAttempt(session.session.id, text.id) as TaskSubmissionResult.Submitted
+        assertFalse(result.isCorrect)
+        assertEquals(0L, result.progress.score)
+    }
+
+    @Test
+    fun v7MigrationPreservesTasksOptionsAttemptsAndMakesOptionNullable() {
+        databaseHelper.close()
+        val old = context.openOrCreateDatabase(databaseName, 0, null)
+        createV7Schema(old)
+        old.execSQL("INSERT INTO games VALUES(1, 'Legacy', 'game-uuid', 1, 10, 'EVENTUAL_CORRECT')")
+        old.execSQL("INSERT INTO stations VALUES(1, 1, 'First', '', 0, 'qr-one')")
+        old.execSQL("INSERT INTO game_sessions VALUES(1, 1, 'IN_PROGRESS', 10, 20, NULL, 'FIRST_TRY_ONLY', 1, 2)")
+        old.execSQL("INSERT INTO tasks VALUES('task-v7', 1, 'MULTIPLE_CHOICE', 'Prompt', 0, 12)")
+        old.execSQL("INSERT INTO task_options VALUES('option-v7', 'task-v7', 'Answer', 0, 1)")
+        old.execSQL("INSERT INTO task_options VALUES('option-wrong', 'task-v7', 'Wrong', 1, 0)")
+        old.execSQL("INSERT INTO task_attempts VALUES('pending-v7', 1, 'task-v7', 'option-v7', 'Answer', 'Prompt', NULL, 30, NULL, 0, 0)")
+        old.execSQL("INSERT INTO task_attempts VALUES('submitted-v7', 1, 'task-v7', 'option-wrong', 'Wrong', 'Prompt', 0, 31, 32, 0, 0)")
+        old.execSQL("PRAGMA user_version = 7")
+        old.close()
+
+        databaseHelper = GameDatabaseHelper(context, databaseName)
+        repository = GameRepository(databaseHelper)
+        val db = databaseHelper.readableDatabase
+        assertEquals(8, db.version)
+        assertEquals("MULTIPLE_CHOICE", db.rawQuery("SELECT type FROM tasks WHERE id = 'task-v7'", null).use {
+            it.moveToFirst(); it.getString(0)
+        })
+        assertEquals(2, db.rawQuery("SELECT COUNT(*) FROM task_options WHERE task_id = 'task-v7'", null).use {
+            it.moveToFirst(); it.getInt(0)
+        })
+        assertEquals(listOf("pending-v7", "submitted-v7"), db.rawQuery(
+            "SELECT id FROM task_attempts WHERE task_id = 'task-v7' ORDER BY selected_at", null
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } })
+        assertEquals(0, db.rawQuery("SELECT awarded_points FROM task_attempts WHERE id = 'pending-v7'", null).use {
+            it.moveToFirst(); it.getInt(0)
+        })
+        val optionIsNullable = db.rawQuery("PRAGMA table_info(task_attempts)", null).use { cursor ->
+            var nullable = false
+            while (cursor.moveToNext()) if (cursor.getString(1) == "selected_option_id") nullable = cursor.getInt(3) == 0
+            nullable
+        }
+        assertTrue(optionIsNullable)
+    }
+
     private fun createGame(
-        tasks: List<MultipleChoiceTaskDraft> = emptyList(),
+        tasks: List<StationTaskDraft> = emptyList(),
         scoringMode: TaskScoringMode = TaskScoringMode.EVENTUAL_CORRECT
     ) = repository.createGame(
         GameDraft(
@@ -691,5 +819,19 @@ class GameTaskRepositoryTest {
             prompt_text_snapshot TEXT NOT NULL, correctness INTEGER, selected_at INTEGER NOT NULL,
             submitted_at INTEGER
         )""")
+    }
+
+    private fun createV7Schema(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE games (id INTEGER PRIMARY KEY, title TEXT NOT NULL, game_uuid TEXT NOT NULL, content_version INTEGER NOT NULL, updated_at INTEGER NOT NULL, scoring_mode TEXT NOT NULL)")
+        db.execSQL("CREATE TABLE stations (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, title TEXT NOT NULL, body_text TEXT NOT NULL, position INTEGER NOT NULL, qr_token TEXT NOT NULL)")
+        db.execSQL("CREATE TABLE game_sessions (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER, scoring_mode TEXT NOT NULL, total_task_count INTEGER, total_station_count INTEGER)")
+        db.execSQL("""CREATE TABLE tasks (id TEXT PRIMARY KEY NOT NULL, station_id INTEGER NOT NULL, type TEXT NOT NULL CHECK(type = 'MULTIPLE_CHOICE'), prompt TEXT NOT NULL, position INTEGER NOT NULL, points INTEGER NOT NULL DEFAULT 100)""")
+        db.execSQL("CREATE TABLE task_options (id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL, text TEXT NOT NULL, position INTEGER NOT NULL, is_correct INTEGER NOT NULL)")
+        db.execSQL("""CREATE TABLE task_attempts (id TEXT PRIMARY KEY NOT NULL, session_id INTEGER NOT NULL, task_id TEXT NOT NULL, selected_option_id TEXT NOT NULL, selected_option_text_snapshot TEXT NOT NULL, prompt_text_snapshot TEXT NOT NULL, correctness INTEGER, selected_at INTEGER NOT NULL, submitted_at INTEGER, awarded_points INTEGER NOT NULL DEFAULT 0, is_finalized INTEGER NOT NULL DEFAULT 0)""")
+        db.execSQL("CREATE INDEX index_tasks_station_id ON tasks(station_id)")
+        db.execSQL("CREATE INDEX index_task_options_task_id ON task_options(task_id)")
+        db.execSQL("CREATE UNIQUE INDEX index_task_options_one_correct ON task_options(task_id) WHERE is_correct = 1")
+        db.execSQL("CREATE INDEX index_task_attempts_session_task ON task_attempts(session_id, task_id, selected_at)")
+        db.execSQL("CREATE UNIQUE INDEX index_task_attempts_one_pending ON task_attempts(session_id, task_id) WHERE submitted_at IS NULL")
     }
 }

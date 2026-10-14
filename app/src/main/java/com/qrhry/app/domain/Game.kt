@@ -23,11 +23,13 @@ data class Station(
     val position: Int,
     val qrToken: String,
     val media: List<StationMedia> = emptyList(),
-    val tasks: List<MultipleChoiceTask> = emptyList()
+    val tasks: List<StationTask> = emptyList()
 )
 
 enum class StationTaskType {
-    MULTIPLE_CHOICE
+    MULTIPLE_CHOICE,
+    TRUE_FALSE,
+    SHORT_TEXT
 }
 
 sealed interface StationTask {
@@ -35,6 +37,7 @@ sealed interface StationTask {
     val stationId: Long
     val prompt: String
     val position: Int
+    val points: Int
     val type: StationTaskType
 }
 
@@ -44,9 +47,31 @@ data class MultipleChoiceTask(
     override val prompt: String,
     override val position: Int,
     val options: List<TaskOption>,
-    val points: Int = 100
+    override val points: Int = 100
 ) : StationTask {
     override val type: StationTaskType = StationTaskType.MULTIPLE_CHOICE
+}
+
+data class TrueFalseTask(
+    override val id: String,
+    override val stationId: Long,
+    override val prompt: String,
+    override val position: Int,
+    val correctAnswer: Boolean,
+    override val points: Int = 100
+) : StationTask {
+    override val type: StationTaskType = StationTaskType.TRUE_FALSE
+}
+
+data class ShortTextTask(
+    override val id: String,
+    override val stationId: Long,
+    override val prompt: String,
+    override val position: Int,
+    val correctAnswer: String,
+    override val points: Int = 100
+) : StationTask {
+    override val type: StationTaskType = StationTaskType.SHORT_TEXT
 }
 
 data class TaskOption(
@@ -57,13 +82,43 @@ data class TaskOption(
     val isCorrect: Boolean
 )
 
+sealed interface StationTaskDraft {
+    val id: String
+    val prompt: String
+    val position: Int
+    val points: Int
+    val type: StationTaskType
+}
+
 data class MultipleChoiceTaskDraft(
-    val id: String,
-    val prompt: String,
-    val position: Int,
+    override val id: String,
+    override val prompt: String,
+    override val position: Int,
     val options: List<TaskOptionDraft>,
-    val points: Int = 100
-)
+    override val points: Int = 100
+) : StationTaskDraft {
+    override val type: StationTaskType = StationTaskType.MULTIPLE_CHOICE
+}
+
+data class TrueFalseTaskDraft(
+    override val id: String,
+    override val prompt: String,
+    override val position: Int,
+    val correctAnswer: Boolean,
+    override val points: Int = 100
+) : StationTaskDraft {
+    override val type: StationTaskType = StationTaskType.TRUE_FALSE
+}
+
+data class ShortTextTaskDraft(
+    override val id: String,
+    override val prompt: String,
+    override val position: Int,
+    val correctAnswer: String,
+    override val points: Int = 100
+) : StationTaskDraft {
+    override val type: StationTaskType = StationTaskType.SHORT_TEXT
+}
 
 data class TaskOptionDraft(
     val id: String,
@@ -71,6 +126,12 @@ data class TaskOptionDraft(
     val position: Int,
     val isCorrect: Boolean
 )
+
+sealed interface TaskAnswer {
+    data class Option(val optionId: String) : TaskAnswer
+    data class BooleanValue(val value: Boolean) : TaskAnswer
+    data class TextValue(val value: String) : TaskAnswer
+}
 
 data class StationVisit(
     val sessionId: Long,
@@ -86,7 +147,7 @@ data class TaskAttempt(
     val id: String,
     val sessionId: Long,
     val taskId: String,
-    val selectedOptionId: String,
+    val selectedOptionId: String?,
     val selectedOptionTextSnapshot: String,
     val promptTextSnapshot: String,
     val correctness: Boolean?,
@@ -100,7 +161,7 @@ data class TaskAttempt(
 }
 
 data class TaskProgress(
-    val task: MultipleChoiceTask,
+    val task: StationTask,
     val attempts: List<TaskAttempt>,
     val pendingAttempt: TaskAttempt?,
     val isCompleted: Boolean
@@ -146,7 +207,7 @@ data class GameDraft(
 data class StationDraft(
     val title: String,
     val bodyText: String,
-    val tasks: List<MultipleChoiceTaskDraft> = emptyList()
+    val tasks: List<StationTaskDraft> = emptyList()
 )
 
 data class StationQrLookup(

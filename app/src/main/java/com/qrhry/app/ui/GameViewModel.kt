@@ -18,7 +18,8 @@ import com.qrhry.app.domain.GameDraft
 import com.qrhry.app.domain.GameDraftValidator
 import com.qrhry.app.domain.GameSession
 import com.qrhry.app.domain.GameSessionStatus
-import com.qrhry.app.domain.MultipleChoiceTaskDraft
+import com.qrhry.app.domain.StationTaskDraft
+import com.qrhry.app.domain.TaskAnswer
 import com.qrhry.app.domain.SessionProgress
 import com.qrhry.app.domain.StationDraft
 import com.qrhry.app.domain.StationQrLookup
@@ -37,6 +38,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class GameScreenState(
     val games: List<Game> = emptyList(),
@@ -89,6 +92,7 @@ enum class QrScanStatus {
 }
 
 class GameViewModel(application: Application) : AndroidViewModel(application) {
+    private val taskAnswerMutex = Mutex()
     private val repository = GameRepository(GameDatabaseHelper(application))
     private val assetStore = GameAssetStore(application.filesDir)
     private val archiveService = GameArchiveService(
@@ -289,7 +293,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         bodyText: String,
         imageUri: Uri?,
         audioUri: Uri?,
-        tasks: List<MultipleChoiceTaskDraft>
+        tasks: List<StationTaskDraft>
     ) {
         if (mutableState.value.isSavingStation) return
         viewModelScope.launch {
@@ -356,12 +360,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun selectTaskOption(taskId: String, optionId: String) {
+    fun savePendingTaskAnswer(taskId: String, answer: TaskAnswer) {
         val sessionId = mutableState.value.sessionProgress?.session?.id ?: return
         viewModelScope.launch {
             try {
-                val progress = withContext(Dispatchers.IO) {
-                    repository.savePendingTaskSelection(sessionId, taskId, optionId)
+                val progress = taskAnswerMutex.withLock {
+                    withContext(Dispatchers.IO) { repository.savePendingTaskAnswer(sessionId, taskId, answer) }
                 }
                 mutableState.value = mutableState.value.copy(
                     sessionProgress = hydrateProgress(progress),
@@ -376,14 +380,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun submitTaskAnswer(taskId: String) {
+    fun submitTaskAnswer(taskId: String, latestAnswer: TaskAnswer? = null) {
         val sessionId = mutableState.value.sessionProgress?.session?.id ?: return
         if (mutableState.value.isSavingTaskAnswer) return
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(isSavingTaskAnswer = true, error = null)
             try {
-                when (val result = withContext(Dispatchers.IO) {
-                    repository.submitTaskAttempt(sessionId, taskId)
+                when (val result = taskAnswerMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        if (latestAnswer != null) repository.savePendingTaskAnswer(sessionId, taskId, latestAnswer)
+                        repository.submitTaskAttempt(sessionId, taskId)
+                    }
                 }) {
                     is TaskSubmissionResult.Submitted -> mutableState.value = mutableState.value.copy(
                         sessionProgress = hydrateProgress(result.progress),

@@ -2,6 +2,7 @@ package com.qrhry.app.data.archive
 
 import com.qrhry.app.domain.StationMediaType
 import com.qrhry.app.domain.TaskScoringMode
+import com.qrhry.app.domain.StationTaskType
 import java.io.File
 
 internal object GameArchiveLimits {
@@ -14,7 +15,7 @@ internal object GameArchiveLimits {
     const val MAX_TASKS_PER_STATION = 32
     const val MAX_OPTIONS_PER_TASK = 32
     const val MAX_MEDIA_PER_STATION = 2
-    const val CURRENT_FORMAT_VERSION = 1
+    const val CURRENT_FORMAT_VERSION = 2
 }
 
 data class GameArchiveManifest(
@@ -45,7 +46,10 @@ data class GameArchiveTask(
     val prompt: String,
     val position: Int,
     val points: Int,
-    val options: List<GameArchiveOption>
+    val type: StationTaskType = StationTaskType.MULTIPLE_CHOICE,
+    val options: List<GameArchiveOption> = emptyList(),
+    val correctBoolean: Boolean? = null,
+    val correctText: String? = null
 )
 
 data class GameArchiveOption(

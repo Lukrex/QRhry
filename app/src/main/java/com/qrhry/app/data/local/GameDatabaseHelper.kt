@@ -44,6 +44,7 @@ class GameDatabaseHelper(
         createTaskTables(db)
         addV6ScoringColumns(db)
         addV7ScoringPolicyColumns(db)
+        migrateV7ToV8(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -73,6 +74,10 @@ class GameDatabaseHelper(
                 6 -> {
                     migrateV6ToV7(db)
                     version = 7
+                }
+                7 -> {
+                    migrateV7ToV8(db)
+                    version = 8
                 }
                 else -> throw SQLiteException(
                     "No migration is defined from database version $version to $newVersion."
@@ -114,6 +119,87 @@ class GameDatabaseHelper(
 
     private fun migrateV6ToV7(db: SQLiteDatabase) {
         addV7ScoringPolicyColumns(db)
+    }
+
+    private fun migrateV7ToV8(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE tasks_v8 (
+                id TEXT PRIMARY KEY NOT NULL,
+                station_id INTEGER NOT NULL,
+                type TEXT NOT NULL CHECK (type IN ('MULTIPLE_CHOICE', 'TRUE_FALSE', 'SHORT_TEXT')),
+                prompt TEXT NOT NULL CHECK (length(trim(prompt)) > 0),
+                position INTEGER NOT NULL CHECK (position >= 0),
+                points INTEGER NOT NULL DEFAULT 100 CHECK (points >= 0),
+                FOREIGN KEY (station_id) REFERENCES stations(id) ON DELETE CASCADE,
+                UNIQUE (station_id, position)
+            )"""
+        )
+        db.execSQL(
+            """CREATE TABLE task_options_v8 (
+                id TEXT PRIMARY KEY NOT NULL,
+                task_id TEXT NOT NULL,
+                text TEXT NOT NULL CHECK (length(trim(text)) > 0),
+                position INTEGER NOT NULL CHECK (position >= 0),
+                is_correct INTEGER NOT NULL CHECK (is_correct IN (0, 1)),
+                FOREIGN KEY (task_id) REFERENCES tasks_v8(id) ON DELETE CASCADE,
+                UNIQUE (task_id, position)
+            )"""
+        )
+        db.execSQL(
+            """CREATE TABLE task_attempts_v8 (
+                id TEXT PRIMARY KEY NOT NULL,
+                session_id INTEGER NOT NULL,
+                task_id TEXT NOT NULL,
+                selected_option_id TEXT,
+                selected_option_text_snapshot TEXT NOT NULL,
+                prompt_text_snapshot TEXT NOT NULL,
+                correctness INTEGER CHECK (correctness IS NULL OR correctness IN (0, 1)),
+                selected_at INTEGER NOT NULL,
+                submitted_at INTEGER,
+                awarded_points INTEGER NOT NULL DEFAULT 0 CHECK (awarded_points >= 0),
+                is_finalized INTEGER NOT NULL DEFAULT 0 CHECK (is_finalized IN (0, 1)),
+                FOREIGN KEY (session_id) REFERENCES game_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (task_id) REFERENCES tasks_v8(id) ON DELETE RESTRICT,
+                CHECK (
+                    (submitted_at IS NULL AND correctness IS NULL) OR
+                    (submitted_at IS NOT NULL AND correctness IS NOT NULL)
+                )
+            )"""
+        )
+        db.execSQL(
+            """INSERT INTO tasks_v8(id, station_id, type, prompt, position, points)
+                SELECT id, station_id, type, prompt, position, points FROM tasks"""
+        )
+        db.execSQL(
+            """INSERT INTO task_options_v8(id, task_id, text, position, is_correct)
+                SELECT id, task_id, text, position, is_correct FROM task_options"""
+        )
+        db.execSQL(
+            """INSERT INTO task_attempts_v8(
+                id, session_id, task_id, selected_option_id, selected_option_text_snapshot,
+                prompt_text_snapshot, correctness, selected_at, submitted_at, awarded_points, is_finalized
+            ) SELECT id, session_id, task_id, selected_option_id, selected_option_text_snapshot,
+                prompt_text_snapshot, correctness, selected_at, submitted_at, awarded_points, is_finalized
+                FROM task_attempts"""
+        )
+        db.execSQL("DROP TABLE task_options")
+        db.execSQL("DROP TABLE task_attempts")
+        db.execSQL("DROP TABLE tasks")
+        db.execSQL("ALTER TABLE tasks_v8 RENAME TO tasks")
+        db.execSQL("ALTER TABLE task_options_v8 RENAME TO task_options")
+        db.execSQL("ALTER TABLE task_attempts_v8 RENAME TO task_attempts")
+        createTaskIndexes(db)
+    }
+
+    private fun createTaskIndexes(db: SQLiteDatabase) {
+        db.execSQL("CREATE INDEX index_tasks_station_id ON tasks(station_id)")
+        db.execSQL("CREATE INDEX index_task_options_task_id ON task_options(task_id)")
+        db.execSQL("CREATE UNIQUE INDEX index_task_options_one_correct ON task_options(task_id) WHERE is_correct = 1")
+        db.execSQL("CREATE INDEX index_task_attempts_session_task ON task_attempts(session_id, task_id, selected_at)")
+        db.execSQL(
+            """CREATE UNIQUE INDEX index_task_attempts_one_pending
+                ON task_attempts(session_id, task_id) WHERE submitted_at IS NULL"""
+        )
     }
 
     private fun addV7ScoringPolicyColumns(db: SQLiteDatabase) {
@@ -294,6 +380,6 @@ class GameDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "qrhry.db"
-        const val DATABASE_VERSION = 7
+        const val DATABASE_VERSION = 8
     }
 }

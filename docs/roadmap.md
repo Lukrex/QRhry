@@ -23,14 +23,18 @@
 - [x] M8: versioned `.qrhry` export/import with SAF, media verification, fresh QR
       identities, and atomic repository import with staged-file cleanup.
 
-## Current scope
+## Completed M9
 
-Continue hardening the local prototype and its test coverage. All game content
-remains data-driven; progression remains linear by station `position`.
+- [x] True/false and deterministic short-text tasks alongside multiple choice.
+- [x] Type-specific authoring and gameplay with shared retry, scoring, and session persistence.
+- [x] SQLite v8 migration preserving existing task and attempt data.
+- [x] `.qrhry` v2 typed task export with v1 multiple-choice import compatibility.
+
+All game content remains data-driven; progression remains linear by station `position`.
 
 ## Later, not implemented
 
-Text answers, numeric answers, secret codes, optional tasks, hints, timers,
+Numeric answers, secret codes, optional tasks, hints, timers,
 achievements, branching, networking, synchronization, and shared content
 versioning. Add each only with an explicit model, migration, and test plan; do
 not hardcode a demonstration game into game logic.

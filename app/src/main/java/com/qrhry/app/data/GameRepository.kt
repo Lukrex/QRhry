@@ -8,6 +8,15 @@ import com.qrhry.app.domain.GameDraft
 import com.qrhry.app.domain.GameDraftValidator
 import com.qrhry.app.domain.MultipleChoiceTask
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
+import com.qrhry.app.domain.ShortTextTask
+import com.qrhry.app.domain.ShortTextTaskDraft
+import com.qrhry.app.domain.ShortAnswerEvaluator
+import com.qrhry.app.domain.StationTask
+import com.qrhry.app.domain.StationTaskDraft
+import com.qrhry.app.domain.StationTaskType
+import com.qrhry.app.domain.TaskAnswer
+import com.qrhry.app.domain.TrueFalseTask
+import com.qrhry.app.domain.TrueFalseTaskDraft
 import com.qrhry.app.domain.GameSession
 import com.qrhry.app.domain.GameSessionStatus
 import com.qrhry.app.domain.CompletedSessionResult
@@ -148,24 +157,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     position = index,
                     qrToken = qrToken,
                     media = mediaByStation[index].map { it.copy(stationId = stationId) },
-                    tasks = stationDraft.tasks.map { task ->
-                        MultipleChoiceTask(
-                            id = task.id,
-                            stationId = stationId,
-                            prompt = task.prompt.trim(),
-                            position = task.position,
-                            points = task.points,
-                            options = task.options.map { option ->
-                                TaskOption(
-                                    id = option.id,
-                                    taskId = task.id,
-                                    text = option.text.trim(),
-                                    position = option.position,
-                                    isCorrect = option.isCorrect
-                                )
-                            }
-                        )
-                    }
+                    tasks = stationDraft.tasks.map { it.toTask(stationId) }
                 )
             }
             val importedGame = Game(
@@ -210,7 +202,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         title: String,
         bodyText: String,
         replacements: List<StationMedia> = emptyList(),
-        tasks: List<MultipleChoiceTaskDraft>? = null
+        tasks: List<StationTaskDraft>? = null
     ): List<StationMedia>? {
         if (title.isBlank()) throw UserMessageException(UserMessageKey.STATION_TITLE_REQUIRED)
         tasks?.let { drafts ->
@@ -543,6 +535,10 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
     }
 
     fun savePendingTaskSelection(sessionId: Long, taskId: String, optionId: String): SessionProgress {
+        return savePendingTaskAnswer(sessionId, taskId, TaskAnswer.Option(optionId))
+    }
+
+    fun savePendingTaskAnswer(sessionId: Long, taskId: String, answer: TaskAnswer): SessionProgress {
         val database = databaseHelper.writableDatabase
         database.beginTransaction()
         try {
@@ -560,8 +556,17 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 throw UserMessageException(UserMessageKey.TASK_ALREADY_COMPLETED)
             }
             val task = getTasks(database, stationId).first { it.id == taskId }
-            val option = task.options.firstOrNull { it.id == optionId }
-                ?: throw UserMessageException(UserMessageKey.ANSWER_UNAVAILABLE)
+            val (optionId, answerSnapshot) = when {
+                task is MultipleChoiceTask && answer is TaskAnswer.Option -> {
+                    val option = task.options.firstOrNull { it.id == answer.optionId }
+                        ?: throw UserMessageException(UserMessageKey.ANSWER_UNAVAILABLE)
+                    option.id to option.text
+                }
+                task is TrueFalseTask && answer is TaskAnswer.BooleanValue ->
+                    null to if (answer.value) TRUE_ANSWER_TOKEN else FALSE_ANSWER_TOKEN
+                task is ShortTextTask && answer is TaskAnswer.TextValue -> null to answer.value
+                else -> throw UserMessageException(UserMessageKey.ANSWER_UNAVAILABLE)
+            }
             val now = System.currentTimeMillis()
             val pendingId = database.rawQuery(
                 "SELECT id FROM task_attempts WHERE session_id = ? AND task_id = ? AND submitted_at IS NULL",
@@ -575,8 +580,8 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                         put("id", UUID.randomUUID().toString())
                         put("session_id", sessionId)
                         put("task_id", taskId)
-                        put("selected_option_id", option.id)
-                        put("selected_option_text_snapshot", option.text)
+                        put("selected_option_id", optionId)
+                        put("selected_option_text_snapshot", answerSnapshot)
                         put("prompt_text_snapshot", task.prompt)
                         putNull("correctness")
                         put("selected_at", now)
@@ -587,7 +592,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 database.execSQL(
                     """UPDATE task_attempts SET selected_option_id = ?, selected_option_text_snapshot = ?,
                         prompt_text_snapshot = ?, selected_at = ? WHERE id = ?""",
-                    arrayOf(option.id, option.text, task.prompt, now, pendingId)
+                    arrayOf(optionId, answerSnapshot, task.prompt, now, pendingId)
                 )
             }
             database.execSQL("UPDATE game_sessions SET updated_at = ? WHERE id = ?", arrayOf(now, sessionId))
@@ -612,12 +617,30 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
             if (isTaskCompleted(database, sessionId, taskId)) return TaskSubmissionResult.TaskAlreadyCompleted
             if (!isCurrentVisitedStation(database, session, stationId)) return TaskSubmissionResult.TaskUnavailable
             val pending = database.rawQuery(
-                "SELECT id, selected_option_id FROM task_attempts WHERE session_id = ? AND task_id = ? AND submitted_at IS NULL",
+                "SELECT id, selected_option_id, selected_option_text_snapshot FROM task_attempts WHERE session_id = ? AND task_id = ? AND submitted_at IS NULL",
                 arrayOf(sessionId.toString(), taskId)
-            ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) to cursor.getString(1) else null }
+            ).use { cursor ->
+                if (cursor.moveToFirst()) Triple(
+                    cursor.getString(0),
+                    if (cursor.isNull(1)) null else cursor.getString(1),
+                    cursor.getString(2)
+                ) else null
+            }
                 ?: return TaskSubmissionResult.NoPendingSelection
             val task = getTasks(database, stationId).first { it.id == taskId }
-            correctness = task.options.firstOrNull { it.id == pending.second }?.isCorrect == true
+            correctness = when (task) {
+                is MultipleChoiceTask -> task.options.firstOrNull { it.id == pending.second }?.isCorrect
+                    ?: throw UserMessageException(UserMessageKey.ANSWER_UNAVAILABLE)
+                is TrueFalseTask -> when (pending.third) {
+                    TRUE_ANSWER_TOKEN -> task.correctAnswer
+                    FALSE_ANSWER_TOKEN -> !task.correctAnswer
+                    else -> throw UserMessageException(UserMessageKey.ANSWER_UNAVAILABLE)
+                }
+                is ShortTextTask -> {
+                    if (pending.third.isBlank()) return TaskSubmissionResult.NoPendingSelection
+                    ShortAnswerEvaluator.matches(task.correctAnswer, pending.third)
+                }
+            }
             val priorSubmissionCount = database.rawQuery(
                 "SELECT COUNT(*) FROM task_attempts WHERE session_id = ? AND task_id = ? AND submitted_at IS NOT NULL",
                 arrayOf(sessionId.toString(), taskId)
@@ -858,7 +881,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
     private fun getTaskProgress(
         database: SQLiteDatabase,
         sessionId: Long,
-        task: MultipleChoiceTask
+        task: StationTask
     ): TaskProgress {
         val attempts = mutableListOf<TaskAttempt>()
         database.rawQuery(
@@ -871,7 +894,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 id = cursor.getString(0),
                 sessionId = cursor.getLong(1),
                 taskId = cursor.getString(2),
-                selectedOptionId = cursor.getString(3),
+                selectedOptionId = if (cursor.isNull(3)) null else cursor.getString(3),
                 selectedOptionTextSnapshot = cursor.getString(4),
                 promptTextSnapshot = cursor.getString(5),
                 correctness = if (cursor.isNull(6)) null else cursor.getInt(6) != 0,
@@ -935,23 +958,48 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         return stations
     }
 
-    private fun getTasks(database: SQLiteDatabase, stationId: Long): List<MultipleChoiceTask> {
-        val tasks = mutableListOf<MultipleChoiceTask>()
+    private fun getTasks(database: SQLiteDatabase, stationId: Long): List<StationTask> {
+        val tasks = mutableListOf<StationTask>()
         database.rawQuery(
-            "SELECT id, station_id, prompt, position, points FROM tasks WHERE station_id = ? ORDER BY position",
+            "SELECT id, station_id, type, prompt, position, points FROM tasks WHERE station_id = ? ORDER BY position",
             arrayOf(stationId.toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 val taskId = cursor.getString(0)
-                tasks += MultipleChoiceTask(
-                    id = taskId,
-                    stationId = cursor.getLong(1),
-                    prompt = cursor.getString(2),
-                    position = cursor.getInt(3),
-                    options = getTaskOptions(database, taskId),
-                    points = cursor.getInt(4)
-                )
+                val stationIdValue = cursor.getLong(1)
+                val type = runCatching { StationTaskType.valueOf(cursor.getString(2)) }
+                    .getOrElse { throw UserMessageException(UserMessageKey.TASK_DEFINITION_INVALID) }
+                val prompt = cursor.getString(3)
+                val position = cursor.getInt(4)
+                val points = cursor.getInt(5)
+                val options = getTaskOptions(database, taskId)
+                tasks += when (type) {
+                    StationTaskType.MULTIPLE_CHOICE -> {
+                        if (options.size < 2 || options.count { it.isCorrect } != 1 ||
+                            options.map { it.position } != options.indices.toList()
+                        ) throw UserMessageException(UserMessageKey.TASK_DEFINITION_INVALID)
+                        MultipleChoiceTask(taskId, stationIdValue, prompt, position, options, points)
+                    }
+                    StationTaskType.TRUE_FALSE -> {
+                        val validTokens = options.map { it.text }.toSet() == setOf(TRUE_ANSWER_TOKEN, FALSE_ANSWER_TOKEN) &&
+                            options.size == 2 && options.map { it.position } == listOf(0, 1)
+                        val correct = options.singleOrNull { it.isCorrect }?.text
+                        if (!validTokens || correct !in setOf(TRUE_ANSWER_TOKEN, FALSE_ANSWER_TOKEN)) {
+                            throw UserMessageException(UserMessageKey.TASK_DEFINITION_INVALID)
+                        }
+                        TrueFalseTask(taskId, stationIdValue, prompt, position, correct == TRUE_ANSWER_TOKEN, points)
+                    }
+                    StationTaskType.SHORT_TEXT -> {
+                        val correct = options.singleOrNull { it.isCorrect }?.text
+                            ?: throw UserMessageException(UserMessageKey.TASK_DEFINITION_INVALID)
+                        if (options.size != 1) throw UserMessageException(UserMessageKey.TASK_DEFINITION_INVALID)
+                        ShortTextTask(taskId, stationIdValue, prompt, position, correct, points)
+                    }
+                }
             }
+        }
+        if (tasks.map { it.position } != tasks.indices.toList()) {
+            throw UserMessageException(UserMessageKey.TASK_DEFINITION_INVALID)
         }
         return tasks
     }
@@ -979,7 +1027,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         database: SQLiteDatabase,
         stationId: Long,
         gameId: Long,
-        drafts: List<MultipleChoiceTaskDraft>
+        drafts: List<StationTaskDraft>
     ) {
         val current = getTasks(database, stationId)
         if (current.matchesDrafts(drafts)) return
@@ -990,6 +1038,16 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         if (hasActiveSession) throw UserMessageException(UserMessageKey.TASK_EDIT_ACTIVE_SESSION)
 
         val retainedIds = drafts.map { it.id }.toSet()
+        current.filter { it.id in retainedIds }.forEach { existing ->
+            val next = drafts.first { it.id == existing.id }
+            if (existing.type != next.type) {
+                val hasAttempts = database.rawQuery(
+                    "SELECT 1 FROM task_attempts WHERE task_id = ? LIMIT 1",
+                    arrayOf(existing.id)
+                ).use { it.moveToFirst() }
+                if (hasAttempts) throw UserMessageException(UserMessageKey.TASK_TYPE_CHANGE_HAS_ATTEMPTS)
+            }
+        }
         current.filter { it.id !in retainedIds }.forEach { task ->
             val hasAttempts = database.rawQuery(
                 "SELECT 1 FROM task_attempts WHERE task_id = ? LIMIT 1",
@@ -1008,7 +1066,7 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                     ContentValues().apply {
                         put("id", draft.id)
                         put("station_id", stationId)
-                        put("type", "MULTIPLE_CHOICE")
+                        put("type", draft.type.name)
                         put("prompt", draft.prompt.trim())
                         put("position", draft.position)
                         put("points", draft.points)
@@ -1016,32 +1074,39 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 )
             } else {
                 database.execSQL(
-                    "UPDATE tasks SET prompt = ?, position = ?, points = ? WHERE id = ? AND station_id = ?",
-                    arrayOf(draft.prompt.trim(), draft.position, draft.points, draft.id, stationId)
+                    "UPDATE tasks SET type = ?, prompt = ?, position = ?, points = ? WHERE id = ? AND station_id = ?",
+                    arrayOf(draft.type.name, draft.prompt.trim(), draft.position, draft.points, draft.id, stationId)
                 )
             }
             database.delete("task_options", "task_id = ?", arrayOf(draft.id))
-            draft.options.forEach { option -> insertTaskOption(database, draft.id, option) }
+            insertTaskOptions(database, draft)
         }
         current.filter { it.id !in retainedIds }.forEach { task ->
             database.delete("tasks", "id = ?", arrayOf(task.id))
         }
     }
 
-    private fun List<MultipleChoiceTask>.matchesDrafts(drafts: List<MultipleChoiceTaskDraft>): Boolean =
+    private fun List<StationTask>.matchesDrafts(drafts: List<StationTaskDraft>): Boolean =
         size == drafts.size && zip(drafts).all { (task, draft) ->
-            task.id == draft.id && task.prompt == draft.prompt.trim() && task.position == draft.position &&
-                task.points == draft.points &&
-                task.options.size == draft.options.size && task.options.zip(draft.options).all { (option, item) ->
-                    option.id == item.id && option.text == item.text.trim() &&
-                        option.position == item.position && option.isCorrect == item.isCorrect
-                }
+            if (task.id != draft.id || task.type != draft.type || task.prompt != draft.prompt.trim() ||
+                task.position != draft.position || task.points != draft.points
+            ) return@all false
+            when {
+                task is MultipleChoiceTask && draft is MultipleChoiceTaskDraft ->
+                    task.options.size == draft.options.size && task.options.zip(draft.options).all { (option, item) ->
+                        option.id == item.id && option.text == item.text.trim() &&
+                            option.position == item.position && option.isCorrect == item.isCorrect
+                    }
+                task is TrueFalseTask && draft is TrueFalseTaskDraft -> task.correctAnswer == draft.correctAnswer
+                task is ShortTextTask && draft is ShortTextTaskDraft -> task.correctAnswer == draft.correctAnswer.trim()
+                else -> false
+            }
         }
 
     private fun insertStationTasks(
         database: SQLiteDatabase,
         stationId: Long,
-        drafts: List<MultipleChoiceTaskDraft>
+        drafts: List<StationTaskDraft>
     ) {
         drafts.forEach { task ->
             database.insertOrThrow(
@@ -1050,14 +1115,37 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
                 ContentValues().apply {
                     put("id", task.id)
                     put("station_id", stationId)
-                    put("type", "MULTIPLE_CHOICE")
+                    put("type", task.type.name)
                     put("prompt", task.prompt.trim())
                     put("position", task.position)
                     put("points", task.points)
                 }
             )
-            task.options.forEach { insertTaskOption(database, task.id, it) }
+            insertTaskOptions(database, task)
         }
+    }
+
+    private fun insertTaskOptions(database: SQLiteDatabase, task: StationTaskDraft) {
+        val options = when (task) {
+            is MultipleChoiceTaskDraft -> task.options
+            is TrueFalseTaskDraft -> listOf(
+                TaskOptionDraft(UUID.randomUUID().toString(), TRUE_ANSWER_TOKEN, 0, task.correctAnswer),
+                TaskOptionDraft(UUID.randomUUID().toString(), FALSE_ANSWER_TOKEN, 1, !task.correctAnswer)
+            )
+            is ShortTextTaskDraft -> listOf(
+                TaskOptionDraft(UUID.randomUUID().toString(), task.correctAnswer.trim(), 0, true)
+            )
+        }
+        options.forEach { insertTaskOption(database, task.id, it) }
+    }
+
+    private fun StationTaskDraft.toTask(stationId: Long): StationTask = when (this) {
+        is MultipleChoiceTaskDraft -> MultipleChoiceTask(
+            id, stationId, prompt.trim(), position,
+            options.map { TaskOption(it.id, id, it.text.trim(), it.position, it.isCorrect) }, points
+        )
+        is TrueFalseTaskDraft -> TrueFalseTask(id, stationId, prompt.trim(), position, correctAnswer, points)
+        is ShortTextTaskDraft -> ShortTextTask(id, stationId, prompt.trim(), position, correctAnswer.trim(), points)
     }
 
     private fun insertTaskOption(database: SQLiteDatabase, taskId: String, option: TaskOptionDraft) {
@@ -1200,3 +1288,6 @@ class GameRepository(private val databaseHelper: GameDatabaseHelper) {
         }
     }
 }
+
+private const val TRUE_ANSWER_TOKEN = "TRUE"
+private const val FALSE_ANSWER_TOKEN = "FALSE"

@@ -107,6 +107,17 @@
     <string name="remove_audio">Odstrániť zvuk</string>
     <string name="add_task">Pridať úlohu s výberom odpovede</string>
     <string name="multiple_choice_task">Úloha s výberom odpovede</string>
+    <string name="task_type">Typ úlohy</string>
+    <string name="task_type_multiple_choice">Výber odpovede</string>
+    <string name="task_type_true_false">Pravda alebo nepravda</string>
+    <string name="task_type_short_text">Krátka textová odpoveď</string>
+    <string name="true_answer">Pravda</string>
+    <string name="false_answer">Nepravda</string>
+    <string name="correct_answer_label">Správna odpoveď</string>
+    <string name="short_answer_hint">Zadajte odpoveď</string>
+    <string name="change_task_type_title">Zmeniť typ úlohy?</string>
+    <string name="change_task_type_body">Uložené nastavenie odpovede sa po uložení nahradí.</string>
+    <string name="change_task_type_confirm">Zmeniť typ</string>
     <string name="remove_task">Odstrániť úlohu</string>
     <string name="question">Otázka</string>
     <string name="task_points">Počet bodov</string>
@@ -146,6 +157,8 @@
     <string name="error_option_text_required">Zadajte text každej možnosti odpovede.</string>
     <string name="error_one_correct_option">Označte presne jednu správnu odpoveď.</string>
     <string name="error_option_identity">Identifikátor možnosti odpovede nie je platný.</string>
+    <string name="error_text_answer_required">Zadajte správnu odpoveď.</string>
+    <string name="error_task_definition_invalid">Táto úloha nie je platná alebo podporovaná.</string>
     <string name="error_task_points">Zadajte nezáporný celý počet bodov.</string>
     <string name="game_scoring_mode">Ako sa udeľujú body za úlohy</string>
     <string name="scoring_eventual_correct">Za správnu odpoveď, aj po opakovaní</string>
@@ -180,6 +193,7 @@
     <string name="error_select_answer">Najprv vyberte odpoveď.</string>
     <string name="error_task_edit_active">Počas aktívnej hernej relácie nemožno meniť úlohy.</string>
     <string name="error_task_delete_attempts">Úlohu s uloženými odpoveďami nemožno odstrániť.</string>
+    <string name="error_task_type_change_attempts">Úlohe s uloženými odpoveďami nemožno zmeniť typ.</string>
     <string name="error_media_game_identity">Identita hry nie je platná.</string>
     <string name="error_media_type_unknown">Typ vybraného súboru sa nepodarilo určiť.</string>
     <string name="error_media_type_unsupported">Tento typ súboru nie je podporovaný.</string>

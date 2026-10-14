@@ -12,19 +12,25 @@ object GameDraftValidator {
         else -> null
     }
 
-    fun taskValidationError(tasks: List<MultipleChoiceTaskDraft>): UserMessageKey? {
+    fun taskValidationError(tasks: List<StationTaskDraft>): UserMessageKey? {
         if (tasks.map { it.position } != tasks.indices.toList()) return UserMessageKey.TASK_ORDER_INVALID
         tasks.forEach { task ->
             if (!isCanonicalUuid(task.id)) return UserMessageKey.TASK_ID_INVALID
             if (task.prompt.isBlank()) return UserMessageKey.QUESTION_REQUIRED
-            if (task.options.size < 2) return UserMessageKey.MINIMUM_OPTIONS_REQUIRED
             if (task.points < 0) return UserMessageKey.TASK_POINTS_INVALID
-            if (task.options.map { it.position } != task.options.indices.toList()) {
-                return UserMessageKey.OPTION_ORDER_INVALID
+            when (task) {
+                is MultipleChoiceTaskDraft -> {
+                    if (task.options.size < 2) return UserMessageKey.MINIMUM_OPTIONS_REQUIRED
+                    if (task.options.map { it.position } != task.options.indices.toList()) {
+                        return UserMessageKey.OPTION_ORDER_INVALID
+                    }
+                    if (task.options.any { it.text.isBlank() }) return UserMessageKey.OPTION_TEXT_REQUIRED
+                    if (task.options.count { it.isCorrect } != 1) return UserMessageKey.EXACTLY_ONE_CORRECT_OPTION_REQUIRED
+                    if (task.options.any { !isCanonicalUuid(it.id) }) return UserMessageKey.OPTION_ID_INVALID
+                }
+                is TrueFalseTaskDraft -> Unit
+                is ShortTextTaskDraft -> if (task.correctAnswer.isBlank()) return UserMessageKey.TEXT_ANSWER_REQUIRED
             }
-            if (task.options.any { it.text.isBlank() }) return UserMessageKey.OPTION_TEXT_REQUIRED
-            if (task.options.count { it.isCorrect } != 1) return UserMessageKey.EXACTLY_ONE_CORRECT_OPTION_REQUIRED
-            if (task.options.any { !isCanonicalUuid(it.id) }) return UserMessageKey.OPTION_ID_INVALID
         }
         return null
     }
