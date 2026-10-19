@@ -89,12 +89,13 @@ class GameArchiveService(
                             position = task.position,
                             points = task.points,
                             type = task.type,
+                            timeLimitSeconds = task.timeLimitSeconds,
                             options = task.options.map { option ->
                                 GameArchiveOption(option.text, option.position, option.isCorrect)
                             }
                             )
-                            is TrueFalseTask -> GameArchiveTask(task.prompt, task.position, task.points, task.type, correctBoolean = task.correctAnswer)
-                            is ShortTextTask -> GameArchiveTask(task.prompt, task.position, task.points, task.type, correctText = task.correctAnswer)
+                            is TrueFalseTask -> GameArchiveTask(task.prompt, task.position, task.points, task.type, correctBoolean = task.correctAnswer, timeLimitSeconds = task.timeLimitSeconds)
+                            is ShortTextTask -> GameArchiveTask(task.prompt, task.position, task.points, task.type, correctText = task.correctAnswer, timeLimitSeconds = task.timeLimitSeconds)
                         }
                     },
                     stationKey = checkNotNull(archiveStationKeys[station.id])
@@ -205,13 +206,13 @@ class GameArchiveService(
                     when (task.type) {
                         com.qrhry.app.domain.StationTaskType.MULTIPLE_CHOICE -> MultipleChoiceTaskDraft(
                             UUID.randomUUID().toString(), task.prompt, task.position,
-                            task.options.map { TaskOptionDraft(UUID.randomUUID().toString(), it.text, it.position, it.isCorrect) }, task.points
+                            task.options.map { TaskOptionDraft(UUID.randomUUID().toString(), it.text, it.position, it.isCorrect) }, task.points, task.timeLimitSeconds
                         )
                         com.qrhry.app.domain.StationTaskType.TRUE_FALSE -> TrueFalseTaskDraft(
-                            UUID.randomUUID().toString(), task.prompt, task.position, checkNotNull(task.correctBoolean), task.points
+                            UUID.randomUUID().toString(), task.prompt, task.position, checkNotNull(task.correctBoolean), task.points, task.timeLimitSeconds
                         )
                         com.qrhry.app.domain.StationTaskType.SHORT_TEXT -> ShortTextTaskDraft(
-                            UUID.randomUUID().toString(), task.prompt, task.position, checkNotNull(task.correctText), task.points
+                            UUID.randomUUID().toString(), task.prompt, task.position, checkNotNull(task.correctText), task.points, task.timeLimitSeconds
                         )
                     }
                 }

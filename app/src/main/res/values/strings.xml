@@ -118,6 +118,13 @@
     <string name="remove_task">Remove task</string>
     <string name="question">Question</string>
     <string name="task_points">Points</string>
+    <string name="task_time_limit">Time limit</string>
+    <string name="task_time_limit_support">Optional · 10–1800 seconds</string>
+    <string name="task_time_seconds">Seconds</string>
+    <string name="task_time_remaining">Time remaining</string>
+    <string name="task_time_running_out">Time is running out</string>
+    <string name="task_time_accessibility">Time remaining: %1$s</string>
+    <string name="task_timed_out">Time expired.</string>
     <string name="answer_options">Answer options</string>
     <string name="select_correct_answer">Mark one correct answer.</string>
     <string name="option_number">Option %1$d</string>
@@ -156,6 +163,7 @@
     <string name="error_text_answer_required">Enter the correct answer.</string>
     <string name="error_task_definition_invalid">This task is invalid or unsupported.</string>
     <string name="error_task_points">Enter a non-negative whole number of points.</string>
+    <string name="error_task_time_limit">Enter a time limit from 10 to 1800 seconds.</string>
     <string name="game_scoring_mode">How question points are awarded</string>
     <string name="scoring_eventual_correct">Award points for a correct answer, including retries</string>
     <string name="scoring_first_try_only">Award points only when the first answer is correct</string>

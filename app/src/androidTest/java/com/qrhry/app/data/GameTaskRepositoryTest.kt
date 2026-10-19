@@ -6,6 +6,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.qrhry.app.data.local.GameDatabaseHelper
 import com.qrhry.app.domain.GameDraft
+import com.qrhry.app.domain.GameProgressionMode
+import com.qrhry.app.domain.GameRouteDraft
+import com.qrhry.app.domain.RouteCondition
+import com.qrhry.app.domain.RouteTransitionDraft
 import com.qrhry.app.domain.GameSessionStatus
 import com.qrhry.app.domain.MultipleChoiceTask
 import com.qrhry.app.domain.MultipleChoiceTaskDraft
@@ -734,6 +738,98 @@ class GameTaskRepositoryTest {
     }
 
     @Test
+    fun timerStartsOnceAndTimeoutCompletesTaskWithoutPoints() {
+        var now = 1_000_000L
+        repository = GameRepository(databaseHelper) { now }
+        val timed = task("Timed", timeLimitSeconds = 10)
+        val game = createGame(listOf(timed))
+        repository.updateGameRoute(game.id, GameRouteDraft(
+            GameProgressionMode.BRANCHED, 0, listOf(
+                RouteTransitionDraft(0, RouteCondition.CORRECT, null),
+                RouteTransitionDraft(0, RouteCondition.INCORRECT, 1),
+                RouteTransitionDraft(1, RouteCondition.INFO, null)
+            )
+        ))
+        val session = repository.startOrResumeSession(game.id).session
+        repository.recordStationScan(session.id, game.stations.first().qrToken)
+
+        val deadline = checkNotNull(repository.activateTaskTimer(session.id, timed.id))
+        assertEquals(deadline, repository.activateTaskTimer(session.id, timed.id))
+        assertEquals(deadline, now + 10_000)
+        databaseHelper.close()
+        databaseHelper = GameDatabaseHelper(context, databaseName)
+        repository = GameRepository(databaseHelper) { now }
+        assertEquals(deadline, repository.getSessionProgress(session.id)?.taskProgress?.single()?.deadlineAt)
+        now = deadline
+        val expired = checkNotNull(repository.timeoutTask(session.id, timed.id))
+        val timeoutAttempt = databaseHelper.readableDatabase.rawQuery(
+            "SELECT is_timed_out, awarded_points FROM task_attempts WHERE session_id = ? AND task_id = ?",
+            arrayOf(session.id.toString(), timed.id)
+        ).use { cursor -> cursor.moveToFirst(); cursor.getInt(0) to cursor.getInt(1) }
+        assertEquals(1, timeoutAttempt.first)
+        assertEquals(0, timeoutAttempt.second)
+        assertEquals(0L, expired.score)
+        assertNull(expired.currentStation)
+        assertEquals(game.stations[1].id, expired.nextStation?.id)
+        assertNull(repository.timeoutTask(session.id, timed.id))
+        assertTrue(repository.submitTaskAttempt(session.id, timed.id) is TaskSubmissionResult.TaskAlreadyCompleted)
+    }
+
+    @Test
+    fun deadlineWinsAgainstLateAnswerAndAnswerBeforeDeadlineIsAccepted() {
+        var now = 5_000L
+        repository = GameRepository(databaseHelper) { now }
+        val timed = task("Timed", timeLimitSeconds = 10)
+        val game = createGame(listOf(timed))
+        val session = repository.startOrResumeSession(game.id).session
+        repository.recordStationScan(session.id, game.stations.first().qrToken)
+        val deadline = checkNotNull(repository.activateTaskTimer(session.id, timed.id))
+        repository.savePendingTaskSelection(session.id, timed.id, timed.options.first { it.isCorrect }.id)
+        now = deadline - 1
+        val onTime = repository.submitTaskAttempt(session.id, timed.id) as TaskSubmissionResult.Submitted
+        assertTrue(onTime.isCorrect)
+        assertEquals(0, databaseHelper.readableDatabase.rawQuery(
+            "SELECT is_timed_out FROM task_attempts WHERE session_id = ? AND task_id = ?",
+            arrayOf(session.id.toString(), timed.id)
+        ).use { cursor -> cursor.moveToFirst(); cursor.getInt(0) })
+
+        val laterTask = task("Late", timeLimitSeconds = 10)
+        val laterGame = createGame(listOf(laterTask))
+        val lateSession = repository.startOrResumeSession(laterGame.id).session
+        repository.recordStationScan(lateSession.id, laterGame.stations.first().qrToken)
+        val lateDeadline = checkNotNull(repository.activateTaskTimer(lateSession.id, laterTask.id))
+        repository.savePendingTaskSelection(lateSession.id, laterTask.id, laterTask.options.first { it.isCorrect }.id)
+        now = lateDeadline
+        val expired = repository.submitTaskAttempt(lateSession.id, laterTask.id) as TaskSubmissionResult.TimedOut
+        assertEquals(1, databaseHelper.readableDatabase.rawQuery(
+            "SELECT is_timed_out FROM task_attempts WHERE session_id = ? AND task_id = ?",
+            arrayOf(lateSession.id.toString(), laterTask.id)
+        ).use { cursor -> cursor.moveToFirst(); cursor.getInt(0) })
+        assertEquals(0L, expired.progress.score)
+    }
+
+    @Test
+    fun trueFalseAndShortTextTasksCanTimeout() {
+        var now = 10_000L
+        repository = GameRepository(databaseHelper) { now }
+        val timedTasks = listOf<StationTaskDraft>(
+            TrueFalseTaskDraft(UUID.randomUUID().toString(), "True?", 0, true, 25, 10),
+            ShortTextTaskDraft(UUID.randomUUID().toString(), "Name it", 0, "Bratislava", 25, 10)
+        )
+        timedTasks.forEach { task ->
+            val game = createGame(listOf(task))
+            val session = repository.startOrResumeSession(game.id).session
+            repository.recordStationScan(session.id, game.stations.first().qrToken)
+            now = checkNotNull(repository.activateTaskTimer(session.id, task.id))
+            assertNotNull(repository.timeoutTask(session.id, task.id))
+            assertEquals(1, databaseHelper.readableDatabase.rawQuery(
+                "SELECT is_timed_out FROM task_attempts WHERE session_id = ? AND task_id = ?",
+                arrayOf(session.id.toString(), task.id)
+            ).use { cursor -> cursor.moveToFirst(); cursor.getInt(0) })
+        }
+    }
+
+    @Test
     fun v7MigrationPreservesTasksOptionsAttemptsAndMakesOptionNullable() {
         databaseHelper.close()
         val old = context.openOrCreateDatabase(databaseName, 0, null)
@@ -752,7 +848,13 @@ class GameTaskRepositoryTest {
         databaseHelper = GameDatabaseHelper(context, databaseName)
         repository = GameRepository(databaseHelper)
         val db = databaseHelper.readableDatabase
-        assertEquals(9, db.version)
+        assertEquals(10, db.version)
+        assertNull(db.rawQuery("SELECT time_limit_seconds FROM tasks WHERE id = 'task-v7'", null).use {
+            it.moveToFirst(); if (it.isNull(0)) null else it.getInt(0)
+        })
+        assertEquals(0, db.rawQuery("SELECT is_timed_out FROM task_attempts WHERE id = 'submitted-v7'", null).use {
+            it.moveToFirst(); it.getInt(0)
+        })
         assertEquals("MULTIPLE_CHOICE", db.rawQuery("SELECT type FROM tasks WHERE id = 'task-v7'", null).use {
             it.moveToFirst(); it.getString(0)
         })
@@ -790,7 +892,8 @@ class GameTaskRepositoryTest {
     private fun task(
         prompt: String,
         position: Int = 0,
-        optionTexts: List<String> = listOf("Wrong", "Correct")
+        optionTexts: List<String> = listOf("Wrong", "Correct"),
+        timeLimitSeconds: Int? = null
     ) = MultipleChoiceTaskDraft(
         id = UUID.randomUUID().toString(),
         prompt = prompt,
@@ -802,7 +905,8 @@ class GameTaskRepositoryTest {
                 position = index,
                 isCorrect = index == optionTexts.lastIndex
             )
-        }
+        },
+        timeLimitSeconds = timeLimitSeconds
     )
 
     private fun createV5Schema(database: SQLiteDatabase) {

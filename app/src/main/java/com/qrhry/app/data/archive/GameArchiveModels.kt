@@ -17,7 +17,7 @@ internal object GameArchiveLimits {
     const val MAX_TASKS_PER_STATION = 32
     const val MAX_OPTIONS_PER_TASK = 32
     const val MAX_MEDIA_PER_STATION = 2
-    const val CURRENT_FORMAT_VERSION = 3
+    const val CURRENT_FORMAT_VERSION = 4
 }
 
 data class GameArchiveManifest(
@@ -61,7 +61,8 @@ data class GameArchiveTask(
     val type: StationTaskType = StationTaskType.MULTIPLE_CHOICE,
     val options: List<GameArchiveOption> = emptyList(),
     val correctBoolean: Boolean? = null,
-    val correctText: String? = null
+    val correctText: String? = null,
+    val timeLimitSeconds: Int? = null
 )
 
 data class GameArchiveOption(

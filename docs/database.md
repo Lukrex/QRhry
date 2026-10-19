@@ -1,7 +1,7 @@
 # Database
 
 The app uses raw SQLite through `SQLiteOpenHelper`; database operations are
-isolated in the data layer. The current schema version is 9.
+isolated in the data layer. The current schema version is 10.
 
 ## Core tables
 
@@ -69,7 +69,8 @@ UUID `id` primary key, `station_id` foreign key to `stations` with cascade,
 `type` constrained to `MULTIPLE_CHOICE`, `TRUE_FALSE`, or `SHORT_TEXT`, nonblank `prompt`, nonnegative
 `position`, nonnegative integer `points` (default 100), and
 `UNIQUE(station_id, position)`. Stations can have zero or more ordered tasks
-even though the initial editor exposes at most one.
+even though the initial editor exposes at most one. `time_limit_seconds` is
+nullable or constrained to 10–1800 seconds.
 
 ### `task_options`
 
@@ -95,6 +96,18 @@ session's scoring mode. `is_finalized = 1` marks the last incorrect submission
 when the player explicitly continues without solving the task. This resolves
 the task for progression but never makes it correct or awards points. Score is
 summed from immutable awards rather than recalculated from mutable definitions.
+`is_timed_out = 1` marks a zero-point finalized timeout, distinct from a player
+choosing to continue after a wrong answer.
+
+### `task_timers`
+
+One row per active `(session_id, task_id)` stores `activated_at` and an absolute
+epoch-millisecond `deadline_at`. It is created once when the player first sees
+the task, survives process/device restart, and is removed atomically when an
+answer or timeout completes the task. The repository checks the same stored
+deadline in the submission transaction. The device wall clock is the source
+across reboots, so changing it while the app is running or stopped can shift
+the deadline.
 
 Task completion is derived from either a submitted correct attempt or a
 finalized incorrect attempt. Station completion is stored on
@@ -137,3 +150,6 @@ and v6→v7 adds scoring policies and explicit task finalization.
 - **v8→v9** adds the nullable session route cursor and creates empty route
   configuration/transition tables. Existing games have no route row and remain
   linear; sessions, station order, attempts, and scores are not rewritten.
+- **v9→v10** adds optional bounded task time limits, a default-false timeout
+  marker to attempts, and active `task_timers`. Existing tasks remain untimed
+  and existing attempts remain ordinary attempts.

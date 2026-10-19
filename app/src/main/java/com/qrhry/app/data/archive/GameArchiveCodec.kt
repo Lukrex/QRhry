@@ -177,10 +177,11 @@ class GameArchiveCodec {
                         else rawTask
                         val type = if (version == 1) StationTaskType.MULTIPLE_CHOICE
                         else task.requiredEnum("type", StationTaskType.entries.toTypedArray())
+                        val timerKey = if (version >= 4) setOf("timeLimitSeconds") else emptySet()
                         val expectedKeys = when (type) {
-                            StationTaskType.MULTIPLE_CHOICE -> if (version == 1) setOf("prompt", "position", "points", "options") else setOf("prompt", "position", "points", "type", "options")
-                            StationTaskType.TRUE_FALSE -> setOf("prompt", "position", "points", "type", "correctAnswer")
-                            StationTaskType.SHORT_TEXT -> setOf("prompt", "position", "points", "type", "correctAnswer")
+                            StationTaskType.MULTIPLE_CHOICE -> (if (version == 1) setOf("prompt", "position", "points", "options") else setOf("prompt", "position", "points", "type", "options")) + timerKey
+                            StationTaskType.TRUE_FALSE -> setOf("prompt", "position", "points", "type", "correctAnswer") + timerKey
+                            StationTaskType.SHORT_TEXT -> setOf("prompt", "position", "points", "type", "correctAnswer") + timerKey
                         }
                         task.requireKeys(*expectedKeys.toTypedArray())
                         val options = if (type == StationTaskType.MULTIPLE_CHOICE) task.requiredArray("options", GameArchiveLimits.MAX_OPTIONS_PER_TASK).map { optionValue ->
@@ -204,7 +205,8 @@ class GameArchiveCodec {
                             type = type,
                             options = options,
                             correctBoolean = answer as? Boolean,
-                            correctText = answer as? String
+                            correctText = answer as? String,
+                            timeLimitSeconds = if (version >= 4 && !task.isNull("timeLimitSeconds")) task.requiredInt("timeLimitSeconds") else null
                         )
                     },
                     stationKey = if (version >= 3) station.requiredString("stationKey") else ""
@@ -273,7 +275,9 @@ class GameArchiveCodec {
             if (station.tasks.size > GameArchiveLimits.MAX_TASKS_PER_STATION) limitExceeded()
             taskCount += station.tasks.size
             station.tasks.forEachIndexed { taskIndex, task ->
-                if (task.position != taskIndex || task.prompt.isBlank() || task.prompt.length > MAX_TEXT_LENGTH || task.points < 0) {
+                if (task.position != taskIndex || task.prompt.isBlank() || task.prompt.length > MAX_TEXT_LENGTH || task.points < 0 ||
+                    !com.qrhry.app.domain.TaskTimerLimits.isValid(task.timeLimitSeconds)
+                ) {
                     invalidArchive()
                 }
                 when (task.type) {
@@ -342,6 +346,7 @@ class GameArchiveCodec {
                         .put("position", task.position)
                         .put("points", task.points)
                         .put("type", task.type.name)
+                if (manifest.formatVersion >= 4) encoded.put("timeLimitSeconds", task.timeLimitSeconds ?: JSONObject.NULL)
                 when (task.type) {
                     StationTaskType.MULTIPLE_CHOICE -> encoded.put("options", options)
                     StationTaskType.TRUE_FALSE -> encoded.put("correctAnswer", task.correctBoolean)

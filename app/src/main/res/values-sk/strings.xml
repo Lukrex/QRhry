@@ -121,6 +121,13 @@
     <string name="remove_task">Odstrániť úlohu</string>
     <string name="question">Otázka</string>
     <string name="task_points">Počet bodov</string>
+    <string name="task_time_limit">Časový limit</string>
+    <string name="task_time_limit_support">Nepovinné · 10 až 1800 sekúnd</string>
+    <string name="task_time_seconds">Sekundy</string>
+    <string name="task_time_remaining">Zostávajúci čas</string>
+    <string name="task_time_running_out">Čas sa kráti</string>
+    <string name="task_time_accessibility">Zostávajúci čas: %1$s</string>
+    <string name="task_timed_out">Čas vypršal.</string>
     <string name="answer_options">Možnosti odpovede</string>
     <string name="select_correct_answer">Označte jednu správnu odpoveď.</string>
     <string name="option_number">Možnosť %1$d</string>
@@ -160,6 +167,7 @@
     <string name="error_text_answer_required">Zadajte správnu odpoveď.</string>
     <string name="error_task_definition_invalid">Táto úloha nie je platná alebo podporovaná.</string>
     <string name="error_task_points">Zadajte nezáporný celý počet bodov.</string>
+    <string name="error_task_time_limit">Zadajte časový limit od 10 do 1800 sekúnd.</string>
     <string name="game_scoring_mode">Ako sa udeľujú body za úlohy</string>
     <string name="scoring_eventual_correct">Za správnu odpoveď, aj po opakovaní</string>
     <string name="scoring_first_try_only">Iba za správnu odpoveď na prvý pokus</string>

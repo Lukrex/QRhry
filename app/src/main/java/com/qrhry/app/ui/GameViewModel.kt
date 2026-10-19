@@ -66,6 +66,7 @@ data class GameScreenState(
     val isSavingStation: Boolean = false,
     val isSavingTaskAnswer: Boolean = false,
     val taskSkippedFeedback: Boolean = false,
+    val taskTimeoutFeedback: Boolean = false,
     val archivePreview: GameArchiveImportPreview? = null,
     val isProcessingArchive: Boolean = false,
     val archiveSuccess: ArchiveUiSuccess? = null
@@ -425,6 +426,39 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun activateTaskTimer(taskId: String, activatedAtMillis: Long) {
+        val sessionId = mutableState.value.sessionProgress?.session?.id ?: return
+        viewModelScope.launch {
+            try {
+                val progress = withContext(Dispatchers.IO) {
+                    repository.activateTaskTimer(sessionId, taskId, activatedAtMillis)
+                    repository.getSessionProgress(sessionId)
+                }
+                if (progress != null) mutableState.value = mutableState.value.copy(sessionProgress = hydrateProgress(progress))
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(error = exception.messageKeyOr(UserMessageKey.GENERIC_ERROR))
+            }
+        }
+    }
+
+    fun timeoutTask(taskId: String) {
+        val sessionId = mutableState.value.sessionProgress?.session?.id ?: return
+        if (mutableState.value.isSavingTaskAnswer) return
+        viewModelScope.launch {
+            try {
+                val progress = taskAnswerMutex.withLock {
+                    withContext(Dispatchers.IO) { repository.timeoutTask(sessionId, taskId) }
+                }
+                if (progress != null) mutableState.value = mutableState.value.copy(
+                    sessionProgress = hydrateProgress(progress), taskSkippedFeedback = false, taskTimeoutFeedback = true,
+                    isSavingTaskAnswer = false, error = null
+                )
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(error = exception.messageKeyOr(UserMessageKey.ANSWER_SUBMIT_FAILED))
+            }
+        }
+    }
+
     fun submitTaskAnswer(taskId: String, latestAnswer: TaskAnswer? = null) {
         val sessionId = mutableState.value.sessionProgress?.session?.id ?: return
         if (mutableState.value.isSavingTaskAnswer) return
@@ -440,7 +474,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     is TaskSubmissionResult.Submitted -> mutableState.value = mutableState.value.copy(
                         sessionProgress = hydrateProgress(result.progress),
                         taskSkippedFeedback = false,
+                        taskTimeoutFeedback = false,
                         isSavingTaskAnswer = false
+                    )
+                    is TaskSubmissionResult.TimedOut -> mutableState.value = mutableState.value.copy(
+                        sessionProgress = hydrateProgress(result.progress), taskSkippedFeedback = false, taskTimeoutFeedback = true,
+                        isSavingTaskAnswer = false, error = null
                     )
                     TaskSubmissionResult.NoPendingSelection -> throw UserMessageException(UserMessageKey.SELECT_ANSWER_FIRST)
                     TaskSubmissionResult.TaskAlreadyCompleted -> throw UserMessageException(UserMessageKey.TASK_ALREADY_COMPLETED)
@@ -465,9 +504,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 val progress = withContext(Dispatchers.IO) {
                     repository.continueTaskAfterWrongAnswer(sessionId, taskId)
                 }
+                val expiredDuringContinue = mutableState.value.sessionProgress?.taskProgress
+                    ?.firstOrNull { it.task.id == taskId }?.deadlineAt?.let { it <= System.currentTimeMillis() } == true
                 mutableState.value = mutableState.value.copy(
                     sessionProgress = hydrateProgress(progress),
-                    taskSkippedFeedback = true,
+                    taskSkippedFeedback = !expiredDuringContinue,
+                    taskTimeoutFeedback = expiredDuringContinue,
                     isSavingTaskAnswer = false
                 )
             } catch (exception: Exception) {
@@ -629,6 +671,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     sessionProgress = progress,
                     stationScanResult = null,
                     taskSkippedFeedback = false,
+                    taskTimeoutFeedback = false,
                     activeSessions = sessions,
                     isLoadingSession = false
                 )
@@ -657,6 +700,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     sessionProgress = progress,
                     stationScanResult = null,
                     taskSkippedFeedback = false,
+                    taskTimeoutFeedback = false,
                     isLoadingSession = false
                 )
             } catch (exception: Exception) {
@@ -713,6 +757,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             sessionProgress = progress,
                             stationScanResult = result,
                             taskSkippedFeedback = false,
+                            taskTimeoutFeedback = false,
                             isLookingUpStation = false
                         )
                         refreshGames()

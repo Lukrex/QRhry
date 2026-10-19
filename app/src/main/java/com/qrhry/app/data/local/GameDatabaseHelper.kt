@@ -46,6 +46,7 @@ class GameDatabaseHelper(
         addV7ScoringPolicyColumns(db)
         migrateV7ToV8(db)
         migrateV8ToV9(db)
+        migrateV9ToV10(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -83,6 +84,10 @@ class GameDatabaseHelper(
                 8 -> {
                     migrateV8ToV9(db)
                     version = 9
+                }
+                9 -> {
+                    migrateV9ToV10(db)
+                    version = 10
                 }
                 else -> throw SQLiteException(
                     "No migration is defined from database version $version to $newVersion."
@@ -220,6 +225,32 @@ class GameDatabaseHelper(
         )
         if (!indexExists(db, "index_station_transitions_target")) {
             db.execSQL("CREATE INDEX index_station_transitions_target ON station_transitions(target_station_id)")
+        }
+    }
+
+    private fun migrateV9ToV10(db: SQLiteDatabase) {
+        if (!hasColumn(db, "tasks", "time_limit_seconds")) {
+            db.execSQL(
+                "ALTER TABLE tasks ADD COLUMN time_limit_seconds INTEGER " +
+                    "CHECK (time_limit_seconds IS NULL OR time_limit_seconds BETWEEN 10 AND 1800)"
+            )
+        }
+        if (!hasColumn(db, "task_attempts", "is_timed_out")) {
+            db.execSQL("ALTER TABLE task_attempts ADD COLUMN is_timed_out INTEGER NOT NULL DEFAULT 0 CHECK (is_timed_out IN (0, 1))")
+        }
+        if (!tableExists(db, "task_timers")) {
+            db.execSQL(
+                """CREATE TABLE task_timers (
+                    session_id INTEGER NOT NULL,
+                    task_id TEXT NOT NULL,
+                    activated_at INTEGER NOT NULL,
+                    deadline_at INTEGER NOT NULL CHECK (deadline_at > activated_at),
+                    PRIMARY KEY (session_id, task_id),
+                    FOREIGN KEY (session_id) REFERENCES game_sessions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                )"""
+            )
+            db.execSQL("CREATE INDEX index_task_timers_deadline ON task_timers(deadline_at)")
         }
     }
 
@@ -426,6 +457,6 @@ class GameDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "qrhry.db"
-        const val DATABASE_VERSION = 9
+        const val DATABASE_VERSION = 10
     }
 }

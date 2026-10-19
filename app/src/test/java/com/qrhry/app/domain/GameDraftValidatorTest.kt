@@ -66,6 +66,22 @@ class GameDraftValidatorTest {
     }
 
     @Test
+    fun taskTimeLimitsAreOptionalAndBounded() {
+        val task = TrueFalseTaskDraft(UUID.randomUUID().toString(), "Statement", 0, true)
+        assertNull(GameDraftValidator.taskValidationError(listOf(task)))
+        assertNull(GameDraftValidator.taskValidationError(listOf(task.copy(timeLimitSeconds = 10))))
+        assertNull(GameDraftValidator.taskValidationError(listOf(task.copy(timeLimitSeconds = 1800))))
+        assertEquals(UserMessageKey.TASK_TIME_LIMIT_INVALID,
+            GameDraftValidator.taskValidationError(listOf(task.copy(timeLimitSeconds = 9))))
+        assertEquals(UserMessageKey.TASK_TIME_LIMIT_INVALID,
+            GameDraftValidator.taskValidationError(listOf(task.copy(timeLimitSeconds = 1801))))
+        assertEquals(60, TaskTimerLimits.remainingSeconds(60_000, 1))
+        assertEquals(0, TaskTimerLimits.remainingSeconds(1_000, 1_000))
+        assertEquals("00:10", TaskTimerLimits.format(10))
+        assertEquals("30:00", TaskTimerLimits.format(1800))
+    }
+
+    @Test
     fun acceptsBranchedRoutesWithConvergenceAndExplicitEnds() {
         val route = GameRouteDraft(
             GameProgressionMode.BRANCHED,

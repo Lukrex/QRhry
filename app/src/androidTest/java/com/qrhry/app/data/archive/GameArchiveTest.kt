@@ -136,6 +136,7 @@ class GameArchiveTest {
             (imported.stations.first().tasks.single() as MultipleChoiceTask).options.first().id
         )
         assertEquals(task.points, imported.stations.first().tasks.single().points)
+        assertEquals(task.timeLimitSeconds, imported.stations.first().tasks.single().timeLimitSeconds)
         assertEquals(task.prompt, imported.stations.first().tasks.single().prompt)
         assertEquals(task.options.map { it.text }, (imported.stations.first().tasks.single() as MultipleChoiceTask).options.map { it.text })
         assertEquals(task.options.map { it.isCorrect }, (imported.stations.first().tasks.single() as MultipleChoiceTask).options.map { it.isCorrect })
@@ -258,6 +259,7 @@ class GameArchiveTest {
             gameUuids += imported.gameUuid
             assertTrue(imported.stations.first().tasks.single() is MultipleChoiceTask)
             assertEquals("Legacy prompt", imported.stations.first().tasks.single().prompt)
+            assertEquals(null, imported.stations.first().tasks.single().timeLimitSeconds)
         } finally {
             old.delete()
         }
@@ -282,6 +284,7 @@ class GameArchiveTest {
             assertEquals("Legacy v2", imported.title)
             assertEquals(com.qrhry.app.domain.GameProgressionMode.LINEAR, imported.route.mode)
             assertEquals("TRUE_FALSE", imported.stations.first().tasks.single().type.name)
+            assertEquals(null, imported.stations.first().tasks.single().timeLimitSeconds)
         } finally {
             old.delete()
         }
@@ -318,6 +321,22 @@ class GameArchiveTest {
         assertEquals(UserMessageKey.ARCHIVE_VERSION_UNSUPPORTED, (versionError as UserMessageException).messageKey)
         assertTrue(!versionStage.exists())
         unsupportedArchive.delete()
+    }
+
+    @Test
+    fun rejectsArchiveTaskTimeLimitsOutsideAllowedRange() {
+        listOf(0, 9, 1801, -1).forEach { invalidLimit ->
+            val invalidArchive = File(context.cacheDir, "qrhry-timer-invalid-${UUID.randomUUID()}.qrhry")
+            val staging = File(context.cacheDir, "qrhry-timer-stage-${UUID.randomUUID()}")
+            writeZip(invalidArchive, listOf(
+                GameArchiveCodec.MANIFEST_ENTRY to manifestWithTaskTimeLimit(invalidLimit).toByteArray()
+            ))
+            val error = runCatching { GameArchiveCodec().read(invalidArchive, staging) }.exceptionOrNull()
+            assertTrue(error is UserMessageException)
+            assertEquals(UserMessageKey.ARCHIVE_INVALID, (error as UserMessageException).messageKey)
+            assertTrue(!staging.exists())
+            invalidArchive.delete()
+        }
     }
 
     @Test
@@ -468,6 +487,7 @@ class GameArchiveTest {
         prompt = "Which path?",
         position = 0,
         points = 375,
+        timeLimitSeconds = 45,
         options = listOf(
             TaskOptionDraft(UUID.randomUUID().toString(), "Wrong", 0, false),
             TaskOptionDraft(UUID.randomUUID().toString(), "Right", 1, true)
@@ -501,6 +521,36 @@ class GameArchiveTest {
             .put("formatVersion", GameArchiveLimits.CURRENT_FORMAT_VERSION)
             .put("title", "Manifest test")
             .put("scoringMode", TaskScoringMode.EVENTUAL_CORRECT.name)
+            .put("progressionMode", "LINEAR")
+            .put("startStationKey", JSONObject.NULL)
+            .put("transitions", JSONArray())
+            .put("stations", JSONArray().put(firstStation).put(secondStation))
+            .toString()
+    }
+
+    private fun manifestWithTaskTimeLimit(seconds: Int): String {
+        val task = JSONObject()
+            .put("prompt", "Timed question")
+            .put("position", 0)
+            .put("points", 10)
+            .put("type", "MULTIPLE_CHOICE")
+            .put("timeLimitSeconds", seconds)
+            .put("options", JSONArray()
+                .put(JSONObject().put("text", "Right").put("position", 0).put("isCorrect", true))
+                .put(JSONObject().put("text", "Wrong").put("position", 1).put("isCorrect", false)))
+        val firstStation = JSONObject()
+            .put("title", "First").put("bodyText", "").put("position", 0)
+            .put("stationKey", UUID.randomUUID().toString())
+            .put("media", JSONArray()).put("tasks", JSONArray().put(task))
+        val secondStation = JSONObject()
+            .put("title", "Second").put("bodyText", "").put("position", 1)
+            .put("stationKey", UUID.randomUUID().toString())
+            .put("media", JSONArray()).put("tasks", JSONArray())
+        return JSONObject()
+            .put("format", "qrhry")
+            .put("formatVersion", 4)
+            .put("title", "Timed archive")
+            .put("scoringMode", "EVENTUAL_CORRECT")
             .put("progressionMode", "LINEAR")
             .put("startStationKey", JSONObject.NULL)
             .put("transitions", JSONArray())

@@ -1,5 +1,7 @@
 package com.qrhry.app.domain
 
+import java.util.Locale
+
 data class Game(
     val id: Long,
     val title: String,
@@ -69,6 +71,7 @@ sealed interface StationTask {
     val position: Int
     val points: Int
     val type: StationTaskType
+    val timeLimitSeconds: Int?
 }
 
 data class MultipleChoiceTask(
@@ -77,7 +80,8 @@ data class MultipleChoiceTask(
     override val prompt: String,
     override val position: Int,
     val options: List<TaskOption>,
-    override val points: Int = 100
+    override val points: Int = 100,
+    override val timeLimitSeconds: Int? = null
 ) : StationTask {
     override val type: StationTaskType = StationTaskType.MULTIPLE_CHOICE
 }
@@ -88,7 +92,8 @@ data class TrueFalseTask(
     override val prompt: String,
     override val position: Int,
     val correctAnswer: Boolean,
-    override val points: Int = 100
+    override val points: Int = 100,
+    override val timeLimitSeconds: Int? = null
 ) : StationTask {
     override val type: StationTaskType = StationTaskType.TRUE_FALSE
 }
@@ -99,7 +104,8 @@ data class ShortTextTask(
     override val prompt: String,
     override val position: Int,
     val correctAnswer: String,
-    override val points: Int = 100
+    override val points: Int = 100,
+    override val timeLimitSeconds: Int? = null
 ) : StationTask {
     override val type: StationTaskType = StationTaskType.SHORT_TEXT
 }
@@ -118,6 +124,7 @@ sealed interface StationTaskDraft {
     val position: Int
     val points: Int
     val type: StationTaskType
+    val timeLimitSeconds: Int?
 }
 
 data class MultipleChoiceTaskDraft(
@@ -125,7 +132,8 @@ data class MultipleChoiceTaskDraft(
     override val prompt: String,
     override val position: Int,
     val options: List<TaskOptionDraft>,
-    override val points: Int = 100
+    override val points: Int = 100,
+    override val timeLimitSeconds: Int? = null
 ) : StationTaskDraft {
     override val type: StationTaskType = StationTaskType.MULTIPLE_CHOICE
 }
@@ -135,7 +143,8 @@ data class TrueFalseTaskDraft(
     override val prompt: String,
     override val position: Int,
     val correctAnswer: Boolean,
-    override val points: Int = 100
+    override val points: Int = 100,
+    override val timeLimitSeconds: Int? = null
 ) : StationTaskDraft {
     override val type: StationTaskType = StationTaskType.TRUE_FALSE
 }
@@ -145,7 +154,8 @@ data class ShortTextTaskDraft(
     override val prompt: String,
     override val position: Int,
     val correctAnswer: String,
-    override val points: Int = 100
+    override val points: Int = 100,
+    override val timeLimitSeconds: Int? = null
 ) : StationTaskDraft {
     override val type: StationTaskType = StationTaskType.SHORT_TEXT
 }
@@ -184,7 +194,8 @@ data class TaskAttempt(
     val selectedAt: Long,
     val submittedAt: Long?,
     val awardedPoints: Int = 0,
-    val isFinalized: Boolean = false
+    val isFinalized: Boolean = false,
+    val isTimedOut: Boolean = false
 ) {
     val isPending: Boolean
         get() = submittedAt == null
@@ -194,7 +205,8 @@ data class TaskProgress(
     val task: StationTask,
     val attempts: List<TaskAttempt>,
     val pendingAttempt: TaskAttempt?,
-    val isCompleted: Boolean
+    val isCompleted: Boolean,
+    val deadlineAt: Long? = null
 ) {
     val lastSubmittedAttempt: TaskAttempt?
         get() = attempts.lastOrNull { it.submittedAt != null }
@@ -207,6 +219,20 @@ data class TaskProgress(
 
     val hasIncorrectSubmission: Boolean
         get() = attempts.any { it.correctness == false && it.submittedAt != null }
+}
+
+object TaskTimerLimits {
+    const val MIN_SECONDS = 10
+    const val MAX_SECONDS = 1800
+
+    fun isValid(seconds: Int?): Boolean = seconds == null || seconds in MIN_SECONDS..MAX_SECONDS
+
+    fun remainingSeconds(deadlineAtMillis: Long, nowMillis: Long): Int =
+        (((deadlineAtMillis - nowMillis).coerceAtLeast(0L) + 999L) / 1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+
+    fun format(seconds: Int): String = String.format(
+        Locale.ROOT, "%02d:%02d", seconds.coerceAtLeast(0) / 60, seconds.coerceAtLeast(0) % 60
+    )
 }
 
 enum class StationMediaType {
@@ -316,6 +342,7 @@ sealed interface TaskSubmissionResult {
         val progress: SessionProgress,
         val pointsAwarded: Int = 0
     ) : TaskSubmissionResult
+    data class TimedOut(val progress: SessionProgress) : TaskSubmissionResult
     data object NoPendingSelection : TaskSubmissionResult
     data object TaskAlreadyCompleted : TaskSubmissionResult
     data object TaskUnavailable : TaskSubmissionResult

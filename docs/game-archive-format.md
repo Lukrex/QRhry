@@ -1,6 +1,6 @@
 # `.qrhry` Archive Format
 
-## Version 3
+## Version 4
 
 A `.qrhry` file is a ZIP archive. Its format version is independent of SQLite
 `DATABASE_VERSION` and the game's `content_version`.
@@ -20,7 +20,7 @@ Example manifest shape:
 ```json
 {
   "format": "qrhry",
-  "formatVersion": 3,
+  "formatVersion": 4,
   "title": "School trail",
   "scoringMode": "FIRST_TRY_ONLY",
   "progressionMode": "LINEAR",
@@ -47,6 +47,7 @@ Example manifest shape:
           "prompt": "Which building is nearby?",
           "position": 0,
           "points": 150,
+          "timeLimitSeconds": 30,
           "type": "MULTIPLE_CHOICE",
           "options": [
             { "text": "Library", "position": 0, "isCorrect": true },
@@ -84,7 +85,7 @@ ZIP.
 ## Content And Identity
 
 The manifest contains authored reusable game content only: title, scoring mode,
-station order/text/media, task type, order, prompts, and points; multiple-choice options with correctness; true/false correct value; or a short-text correct answer. Version 1 has no game description field because the
+station order/text/media, task type, order, prompts, points, and optional per-task time limits; multiple-choice options with correctness; true/false correct value; or a short-text correct answer. Version 1 has no game description field because the
 current app model has none.
 
 The archive deliberately omits database integer IDs, source game/station/task/
@@ -97,7 +98,7 @@ regenerated for each imported copy.
 
 ## Validation And Limits
 
-The reader accepts only `format = "qrhry"` and versions 1, 2, and 3. Version 1 tasks are interpreted as `MULTIPLE_CHOICE`; versions 2 and 3 tasks require an explicit type and exactly the fields for that type. Versions 1 and 2 are imported as linear games. Version 3 includes explicit route metadata and station keys. Unknown types and malformed type-specific data are rejected. It rejects
+The reader accepts only `format = "qrhry"` and versions 1 through 4. Version 1 tasks are interpreted as `MULTIPLE_CHOICE`; versions 2–4 tasks require an explicit type and exactly the fields for that type. Versions 1 and 2 are imported as linear games. Version 3 adds explicit route metadata and station keys. Version 4 adds nullable `timeLimitSeconds` (10–1800 when set); versions 1–3 import tasks as untimed. Unknown types and malformed type-specific data are rejected. It rejects
 unknown/missing JSON keys, incorrect JSON types, malformed UTF-8/JSON, invalid
 ordering, blank required text, negative points, invalid scoring modes, fewer
 than two stations, invalid option sets, duplicate media types per station,
@@ -142,7 +143,7 @@ hours, avoiding races with active imports. SQLite and the filesystem do not
 share an atomic commit; cleanup reconciles a process death between directory
 promotion and database commit.
 
-Version 3 exports are not readable by older app versions. The current app continues to import v1 and v2. SQLite route data is stored with schema v9.
+Version 4 exports are not readable by older app versions. The current app continues to import v1–v3. SQLite route and timer data is stored with schema v10.
 
 ## SOČ Demonstration
 

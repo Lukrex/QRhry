@@ -9,12 +9,13 @@ flow is:
 
 - `domain` contains game, station, typed task, option, visit, attempt,
   drafts, and validation models without Android or database dependencies.
-- `data.local.GameDatabaseHelper` owns schema version 9, foreign keys, indexes,
+- `data.local.GameDatabaseHelper` owns schema version 10, foreign keys, indexes,
   and sequential, non-destructive migrations.
 - `data.GameRepository` owns parameterized reads and transactional writes for
   game/station/task/route content, session progression, and scoring. It validates
   QR order, session/game/task ownership, answer submissions, route graphs, and
-  completion.
+  completion. Per-task timers persist an absolute deadline when the player
+  first sees a timed task; timeout and answer submission resolve transactionally.
 - `data.archive.GameArchiveService` coordinates SAF import/export, while
   `GameArchiveCodec` owns the versioned ZIP/JSON format and bounded validation.
   `GameRepository` supplies consistent relational snapshots and transactional
@@ -78,13 +79,17 @@ while its game has an active session. A game's scoring mode may be edited, but
 active and completed runs keep their session snapshot. Attempt rows snapshot the
 prompt, selected answer text, correctness, awarded points, finalization state,
 and timestamps; selected option IDs are not foreign keys, so option changes do
-not erase historical answers. A task with attempts is not deleted. No timers,
-hints, achievements, or networking are implemented. Future task types should use typed relational data rather than
+not erase historical answers. A task with attempts is not deleted. Tasks may
+have an optional 10–1800 second timer. Its persisted epoch deadline survives
+process/device restart; changing the device clock while the app is running or
+stopped can shift it. A timeout records a distinct zero-point finalized attempt and uses the
+existing incorrect route. Hints, achievements, and networking are not
+implemented. Future task types should use typed relational data rather than
 nullable columns on `stations` or opaque JSON.
 
 ## Portable game archives
 
-The `.qrhry` v3 format is a content-only ZIP with a JSON manifest and generated
+The `.qrhry` v4 format is a content-only ZIP with a JSON manifest and generated
 asset aliases. It excludes sessions, visits, attempts, and results. Import
 creates fresh local identities, including new station QR tokens, so it creates a
 new QR set rather than reusing a source game's printed codes. Archive parsing
@@ -92,5 +97,5 @@ is bounded and never extracts using untrusted ZIP paths. Media are staged and
 verified before a repository transaction inserts the game. The archive format,
 limits, and failure compensation are specified in `game-archive-format.md`;
 startup recovery removes staging/orphan directories older than 24 hours, so a
-recent in-progress import is not mistaken for abandoned work. SQLite remains at
-schema v9. The current app imports v1/v2 archives as linear games.
+recent in-progress import is not mistaken for abandoned work. SQLite is at
+schema v10. The current app imports v1–v3 archives; v1/v2 are linear.

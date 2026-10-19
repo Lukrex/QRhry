@@ -159,32 +159,39 @@ private data class TaskFormState(
     val type: StationTaskType = StationTaskType.MULTIPLE_CHOICE,
     val options: List<TaskOptionFormState> = listOf(TaskOptionFormState(), TaskOptionFormState()),
     val trueFalseCorrect: Boolean = true,
-    val shortAnswer: String = ""
+    val shortAnswer: String = "",
+    val timeLimitEnabled: Boolean = false,
+    val timeLimitText: String = "60"
 )
 
 private fun TaskFormState.toDraft(position: Int): StationTaskDraft {
     val points = pointsText.toIntOrNull() ?: -1
+    val timeLimit = if (!timeLimitEnabled) null else timeLimitText.toIntOrNull() ?: -1
     return when (type) {
         StationTaskType.MULTIPLE_CHOICE -> MultipleChoiceTaskDraft(
             id, prompt, position,
             options.mapIndexed { index, option -> TaskOptionDraft(option.id, option.text, index, option.isCorrect) },
-            points
+            points, timeLimit
         )
-        StationTaskType.TRUE_FALSE -> TrueFalseTaskDraft(id, prompt, position, trueFalseCorrect, points)
-        StationTaskType.SHORT_TEXT -> ShortTextTaskDraft(id, prompt, position, shortAnswer, points)
+        StationTaskType.TRUE_FALSE -> TrueFalseTaskDraft(id, prompt, position, trueFalseCorrect, points, timeLimit)
+        StationTaskType.SHORT_TEXT -> ShortTextTaskDraft(id, prompt, position, shortAnswer, points, timeLimit)
     }
 }
 
 private fun StationTask.toFormState(): TaskFormState = when (this) {
     is MultipleChoiceTask -> TaskFormState(
         id = id, prompt = prompt, pointsText = points.toString(), type = type,
-        options = options.map { TaskOptionFormState(it.id, it.text, it.isCorrect) }
+        options = options.map { TaskOptionFormState(it.id, it.text, it.isCorrect) },
+        timeLimitEnabled = timeLimitSeconds != null,
+        timeLimitText = (timeLimitSeconds ?: 60).toString()
     )
     is TrueFalseTask -> TaskFormState(
-        id = id, prompt = prompt, pointsText = points.toString(), type = type, trueFalseCorrect = correctAnswer
+        id = id, prompt = prompt, pointsText = points.toString(), type = type, trueFalseCorrect = correctAnswer,
+        timeLimitEnabled = timeLimitSeconds != null, timeLimitText = (timeLimitSeconds ?: 60).toString()
     )
     is ShortTextTask -> TaskFormState(
-        id = id, prompt = prompt, pointsText = points.toString(), type = type, shortAnswer = correctAnswer
+        id = id, prompt = prompt, pointsText = points.toString(), type = type, shortAnswer = correctAnswer,
+        timeLimitEnabled = timeLimitSeconds != null, timeLimitText = (timeLimitSeconds ?: 60).toString()
     )
 }
 
@@ -224,7 +231,9 @@ private class DraftTokenReader(private val values: List<String>) {
                 isCorrect = next().toBoolean()
             )
         }
-        return TaskFormState(taskId, prompt, pointsText, type, options, trueFalseCorrect, shortAnswer)
+        val timeEnabled = next().toBoolean()
+        val timeText = next()
+        return TaskFormState(taskId, prompt, pointsText, type, options, trueFalseCorrect, shortAnswer, timeEnabled, timeText)
     }
 
     fun nextRequiredTask(): TaskFormState = checkNotNull(nextTask())
@@ -245,6 +254,8 @@ private fun MutableList<String>.appendTask(task: TaskFormState?) {
         add(option.text)
         add(option.isCorrect.toString())
     }
+    add(task.timeLimitEnabled.toString())
+    add(task.timeLimitText)
 }
 
 private val stationFormsSaver = listSaver<List<StationFormState>, String>(
@@ -417,7 +428,10 @@ fun GameScreen(
                 isLoading = state.isLoadingSession,
                 isSubmittingAnswer = state.isSavingTaskAnswer,
                 taskSkippedFeedback = state.taskSkippedFeedback,
+                taskTimeoutFeedback = state.taskTimeoutFeedback,
                 onSelectOption = viewModel::savePendingTaskAnswer,
+                onActivateTaskTimer = viewModel::activateTaskTimer,
+                onTimeoutTask = viewModel::timeoutTask,
                 onSubmitTask = viewModel::submitTaskAnswer,
                 onContinueTask = viewModel::continueTaskAfterWrongAnswer,
                 onScan = viewModel::openSessionScanner,
@@ -768,6 +782,8 @@ private fun userMessageText(key: UserMessageKey): String = stringResource(
         UserMessageKey.TEXT_ANSWER_REQUIRED -> R.string.error_text_answer_required
         UserMessageKey.TASK_DEFINITION_INVALID -> R.string.error_task_definition_invalid
         UserMessageKey.TASK_POINTS_INVALID -> R.string.error_task_points
+        UserMessageKey.TASK_TIME_LIMIT_INVALID -> R.string.error_task_time_limit
+        UserMessageKey.TASK_TIMED_OUT -> R.string.task_timed_out
         UserMessageKey.GAME_UNAVAILABLE -> R.string.error_game_unavailable
         UserMessageKey.GAME_HAS_NO_STATIONS -> R.string.error_game_no_stations
         UserMessageKey.STATION_UNAVAILABLE -> R.string.error_station_unavailable
@@ -1201,7 +1217,10 @@ private fun PlaySessionScreen(
     isLoading: Boolean,
     isSubmittingAnswer: Boolean,
     taskSkippedFeedback: Boolean,
+    taskTimeoutFeedback: Boolean,
     onSelectOption: (String, TaskAnswer) -> Unit,
+    onActivateTaskTimer: (String, Long) -> Unit,
+    onTimeoutTask: (String) -> Unit,
     onSubmitTask: (String, TaskAnswer?) -> Unit,
     onContinueTask: (String) -> Unit,
     onScan: () -> Unit,
@@ -1326,6 +1345,8 @@ private fun PlaySessionScreen(
                         progress = taskProgress,
                         isSubmitting = isSubmittingAnswer,
                         onSelectAnswer = { answer -> onSelectOption(taskProgress.task.id, answer) },
+                        onActivateTimer = { activatedAt -> onActivateTaskTimer(taskProgress.task.id, activatedAt) },
+                        onTimeout = { onTimeoutTask(taskProgress.task.id) },
                         onSubmit = { answer -> onSubmitTask(taskProgress.task.id, answer) },
                         onContinue = { onContinueTask(taskProgress.task.id) }
                     )
@@ -1348,8 +1369,11 @@ private fun PlaySessionScreen(
                 }
             }
         }
-        if (!isCompleted && taskSkippedFeedback && progress.currentStation == null) {
-            StatusMessage(stringResource(R.string.task_skipped), icon = QRhryIconKind.FORWARD)
+        if ((taskTimeoutFeedback || (!isCompleted && taskSkippedFeedback)) && progress.currentStation == null) {
+            StatusMessage(
+                stringResource(if (taskTimeoutFeedback) R.string.task_timed_out else R.string.task_skipped),
+                icon = QRhryIconKind.FORWARD
+            )
         }
         if (!isCompleted) {
             scanResult?.let { result ->
@@ -1896,6 +1920,7 @@ private fun MultipleChoiceTaskEditor(
     onChange: (TaskFormState) -> Unit,
     onRemove: () -> Unit
 ) {
+    val timeLimitLabel = stringResource(R.string.task_time_limit)
     val moveUpLabel = stringResource(R.string.move_up)
     val moveDownLabel = stringResource(R.string.move_down)
     var typeMenuExpanded by remember { mutableStateOf(false) }
@@ -1961,6 +1986,29 @@ private fun MultipleChoiceTaskEditor(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true
             )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.task_time_limit), style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.task_time_limit_support), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = task.timeLimitEnabled, onCheckedChange = {
+                    onChange(task.copy(timeLimitEnabled = it))
+                }, modifier = Modifier.semantics { contentDescription = timeLimitLabel })
+            }
+            if (task.timeLimitEnabled) {
+                OutlinedTextField(
+                    value = task.timeLimitText,
+                    onValueChange = { value -> onChange(task.copy(timeLimitText = value.filter(Char::isDigit).take(4))) },
+                    modifier = Modifier.align(Alignment.End).widthIn(min = 136.dp, max = 180.dp),
+                    label = { Text(stringResource(R.string.task_time_seconds)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true
+                )
+            }
 
             if (task.type == StationTaskType.MULTIPLE_CHOICE) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -2098,9 +2146,27 @@ private fun MultipleChoiceTaskPlayer(
     progress: TaskProgress,
     isSubmitting: Boolean,
     onSelectAnswer: (TaskAnswer) -> Unit,
+    onActivateTimer: (Long) -> Unit,
+    onTimeout: () -> Unit,
     onSubmit: (TaskAnswer?) -> Unit,
     onContinue: () -> Unit
 ) {
+    val timerReady = progress.task.timeLimitSeconds == null || progress.deadlineAt != null || progress.isCompleted
+    var nowMillis by remember(progress.task.id) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(progress.task.id, progress.isCompleted, progress.task.timeLimitSeconds) {
+        if (progress.task.timeLimitSeconds != null && !progress.isCompleted) onActivateTimer(System.currentTimeMillis())
+    }
+    LaunchedEffect(progress.deadlineAt, progress.isCompleted) {
+        val deadline = progress.deadlineAt ?: return@LaunchedEffect
+        while (!progress.isCompleted) {
+            nowMillis = System.currentTimeMillis()
+            if (nowMillis >= deadline) {
+                onTimeout()
+                return@LaunchedEffect
+            }
+            delay(1000)
+        }
+    }
     var textAnswer by rememberSaveable(progress.task.id) {
         mutableStateOf(progress.pendingAttempt?.selectedOptionTextSnapshot.orEmpty())
     }
@@ -2117,12 +2183,39 @@ private fun MultipleChoiceTaskPlayer(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(progress.task.prompt, style = MaterialTheme.typography.titleLarge)
+            progress.deadlineAt?.takeIf { !progress.isCompleted }?.let { deadline ->
+                val seconds = com.qrhry.app.domain.TaskTimerLimits.remainingSeconds(deadline, nowMillis)
+                val urgent = seconds <= 10
+                val formattedTime = com.qrhry.app.domain.TaskTimerLimits.format(seconds)
+                val accessibleTime = stringResource(R.string.task_time_accessibility, formattedTime)
+                Row(
+                    modifier = Modifier.fillMaxWidth().semantics {
+                        contentDescription = accessibleTime
+                    },
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Text(
+                        stringResource(if (urgent) R.string.task_time_running_out else R.string.task_time_remaining),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        formattedTime,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
             AnimatedVisibility(
                 visible = progress.isCompleted,
                 enter = fadeIn(tween(220)) + scaleIn(initialScale = 0.96f, animationSpec = tween(220))
             ) {
                 if (progress.isSkipped) {
-                    StatusMessage(stringResource(R.string.task_skipped), icon = QRhryIconKind.FORWARD)
+                    StatusMessage(
+                        stringResource(if (progress.attempts.any { it.isTimedOut }) R.string.task_timed_out else R.string.task_skipped),
+                        icon = QRhryIconKind.FORWARD
+                    )
                 } else {
                     Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         QRhryIcon(QRhryIconKind.CHECK, tint = MaterialTheme.colorScheme.primary)
@@ -2152,7 +2245,7 @@ private fun MultipleChoiceTaskPlayer(
                             modifier = Modifier.fillMaxWidth().height(52.dp).selectable(
                                 selected = progress.pendingAttempt?.selectedOptionId == option.id,
                                 onClick = { onSelectAnswer(TaskAnswer.Option(option.id)) },
-                                enabled = !isSubmitting,
+                                enabled = !isSubmitting && timerReady,
                                 role = Role.RadioButton
                             ),
                             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
@@ -2160,7 +2253,7 @@ private fun MultipleChoiceTaskPlayer(
                             RadioButton(
                                 selected = progress.pendingAttempt?.selectedOptionId == option.id,
                                 onClick = null,
-                                enabled = !isSubmitting
+                                enabled = !isSubmitting && timerReady
                             )
                             Text(option.text)
                         }
@@ -2168,7 +2261,7 @@ private fun MultipleChoiceTaskPlayer(
                     is TrueFalseTask -> listOf(true to R.string.true_answer, false to R.string.false_answer).forEach { (value, label) ->
                         OutlinedButton(
                             onClick = { onSelectAnswer(TaskAnswer.BooleanValue(value)) },
-                            enabled = !isSubmitting,
+                            enabled = !isSubmitting && timerReady,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             if (progress.pendingAttempt?.selectedOptionTextSnapshot == if (value) "TRUE" else "FALSE") {
@@ -2181,7 +2274,7 @@ private fun MultipleChoiceTaskPlayer(
                     is ShortTextTask -> OutlinedTextField(
                         value = textAnswer,
                         onValueChange = { textAnswer = it },
-                        enabled = !isSubmitting,
+                        enabled = !isSubmitting && timerReady,
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text(stringResource(R.string.short_answer_hint)) },
                         singleLine = true
@@ -2191,13 +2284,13 @@ private fun MultipleChoiceTaskPlayer(
                     onClick = {
                         onSubmit(if (progress.task is ShortTextTask) TaskAnswer.TextValue(textAnswer) else null)
                     },
-                    enabled = (progress.pendingAttempt != null || (progress.task is ShortTextTask && textAnswer.isNotBlank())) && !isSubmitting,
+                    enabled = timerReady && (progress.pendingAttempt != null || (progress.task is ShortTextTask && textAnswer.isNotBlank())) && !isSubmitting,
                     modifier = Modifier.fillMaxWidth()
                 ) { IconLabel(QRhryIconKind.CHECK, stringResource(if (isSubmitting) R.string.submitting else R.string.submit_answer)) }
                 if (progress.hasIncorrectSubmission) {
                     OutlinedButton(
                         onClick = onContinue,
-                        enabled = !isSubmitting,
+                        enabled = timerReady && !isSubmitting,
                         modifier = Modifier.fillMaxWidth()
                     ) { IconLabel(QRhryIconKind.FORWARD, stringResource(R.string.continue_without_correct)) }
                 }

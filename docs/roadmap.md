@@ -35,13 +35,16 @@
       multiple endings.
 - [x] SQLite v9 route tables and session cursor; existing games remain linear.
 - [x] `.qrhry` v3 route export/import with v1/v2 linear import compatibility.
+- [x] M11: optional 10–1800 second task timers, persisted deadlines, atomic
+      zero-point timeout results, and `.qrhry` v4 timer compatibility.
+- [x] SQLite v10 task timer state; v1–v3 archives continue to import as untimed.
 
 Linear games continue to follow station `position`; branched games use explicit
 route edges.
 
 ## Later, not implemented
 
-Numeric answers, secret codes, optional tasks, hints, timers,
+Numeric answers, secret codes, optional tasks, hints, whole-game timers,
 achievements, networking, synchronization, and shared content
 versioning. Add each only with an explicit model, migration, and test plan; do
 not hardcode a demonstration game into game logic.
