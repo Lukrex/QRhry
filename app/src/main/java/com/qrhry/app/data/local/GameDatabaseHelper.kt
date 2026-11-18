@@ -47,6 +47,7 @@ class GameDatabaseHelper(
         migrateV7ToV8(db)
         migrateV8ToV9(db)
         migrateV9ToV10(db)
+        migrateV10ToV11(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -88,6 +89,10 @@ class GameDatabaseHelper(
                 9 -> {
                     migrateV9ToV10(db)
                     version = 10
+                }
+                10 -> {
+                    migrateV10ToV11(db)
+                    version = 11
                 }
                 else -> throw SQLiteException(
                     "No migration is defined from database version $version to $newVersion."
@@ -252,6 +257,14 @@ class GameDatabaseHelper(
             )
             db.execSQL("CREATE INDEX index_task_timers_deadline ON task_timers(deadline_at)")
         }
+    }
+
+    private fun migrateV10ToV11(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE games ADD COLUMN source_catalog_publication_id TEXT")
+        db.execSQL("ALTER TABLE games ADD COLUMN source_catalog_revision_id TEXT")
+        db.execSQL(
+            "CREATE UNIQUE INDEX index_games_source_catalog_publication ON games(source_catalog_publication_id) WHERE source_catalog_publication_id IS NOT NULL"
+        )
     }
 
     private fun hasColumn(db: SQLiteDatabase, table: String, column: String): Boolean =
@@ -457,6 +470,6 @@ class GameDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "qrhry.db"
-        const val DATABASE_VERSION = 10
+        const val DATABASE_VERSION = 11
     }
 }

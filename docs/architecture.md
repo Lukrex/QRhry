@@ -9,13 +9,17 @@ flow is:
 
 - `domain` contains game, station, typed task, option, visit, attempt,
   drafts, and validation models without Android or database dependencies.
-- `data.local.GameDatabaseHelper` owns schema version 10, foreign keys, indexes,
+- `data.local.GameDatabaseHelper` owns schema version 11, foreign keys, indexes,
   and sequential, non-destructive migrations.
 - `data.GameRepository` owns parameterized reads and transactional writes for
   game/station/task/route content, session progression, and scoring. It validates
   QR order, session/game/task ownership, answer submissions, route graphs, and
   completion. Per-task timers persist an absolute deadline when the player
   first sees a timed task; timeout and answer submission resolve transactionally.
+- The optional M12 online catalogue uses a separate `data.online` boundary for
+  Firebase Auth, Firestore, Storage and callable Functions. It never replaces
+  `GameRepository`; downloaded games pass through the existing archive service
+  before becoming local SQLite games.
 - `data.archive.GameArchiveService` coordinates SAF import/export, while
   `GameArchiveCodec` owns the versioned ZIP/JSON format and bounded validation.
   `GameRepository` supplies consistent relational snapshots and transactional
@@ -98,4 +102,4 @@ verified before a repository transaction inserts the game. The archive format,
 limits, and failure compensation are specified in `game-archive-format.md`;
 startup recovery removes staging/orphan directories older than 24 hours, so a
 recent in-progress import is not mistaken for abandoned work. SQLite is at
-schema v10. The current app imports v1–v3 archives; v1/v2 are linear.
+schema v11. The current app imports v1–v3 archives; v1/v2 are linear.

@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /publicGames/{publicationId} {
+      allow get, list: if resource.data.state == 'PUBLISHED';
+      allow create, update, delete: if false;
+    }
+    match /users/{uid}/publications/{publicationId} {
+      allow get, list: if request.auth != null && request.auth.uid == uid;
+      allow create, update, delete: if false;
+    }
+    match /users/{uid}/requests/{requestId} {
+      allow read, write: if false;
+    }
+    match /users/{uid}/rateLimits/{window} {
+      allow read, write: if false;
+    }
+    match /users/{uid}/uploads/{requestId} {
+      allow read, write: if false;
+    }
+  }
+}

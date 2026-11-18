@@ -38,6 +38,13 @@
 - [x] M11: optional 10–1800 second task timers, persisted deadlines, atomic
       zero-point timeout results, and `.qrhry` v4 timer compatibility.
 - [x] SQLite v10 task timer state; v1–v3 archives continue to import as untimed.
+- [x] M12: optional Firebase catalogue, verified-email publishing, immutable
+      archive revisions, public discovery/download and duplicate import guard.
+- [x] SQLite v11 records catalogue source IDs; local games remain independent.
+
+M12 configuration, rules and deployment are described in `catalog.md`. Firebase
+project setup and production deployment are operator steps; no project or
+credentials are included in this repository.
 
 Linear games continue to follow station `position`; branched games use explicit
 route edges.

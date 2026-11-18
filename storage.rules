@@ -1,0 +1,23 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // The reservation lookup below requires Firebase's Storage-to-Firestore Rules permission.
+    match /staging/{uid}/{requestId}/{name} {
+      allow create: if request.auth != null && request.auth.uid == uid
+        && requestId.matches('^[A-Za-z0-9_-]{8,64}$')
+        && name == requestId + '.qrhry'
+        && request.resource.size > 0 && request.resource.size <= 104857600
+        && request.resource.contentType == 'application/zip'
+        && firestore.get(/databases/(default)/documents/users/$(uid)/uploads/$(requestId)).data.expiresAt > request.time
+        && resource == null;
+      allow read, update: if false;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+    match /published/{publicationId}/{fileName} {
+      allow read: if firestore.get(/databases/(default)/documents/publicGames/$(publicationId)).data.state == 'PUBLISHED'
+        && firestore.get(/databases/(default)/documents/publicGames/$(publicationId)).data.revisionId + '.qrhry' == fileName;
+      allow write: if false;
+    }
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}

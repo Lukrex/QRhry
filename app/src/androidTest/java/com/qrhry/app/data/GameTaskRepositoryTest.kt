@@ -71,6 +71,34 @@ class GameTaskRepositoryTest {
     }
 
     @Test
+    fun catalogueImportRecordsOriginAndRejectsDuplicatePublication() {
+        val draft = GameDraft(
+            title = "Catalogue copy",
+            stations = listOf(StationDraft("Start", ""), StationDraft("Finish", ""))
+        )
+        val publicationId = "publication-123456"
+        val first = repository.importGame(
+            draft, UUID.randomUUID().toString(), listOf(emptyList(), emptyList()),
+            sourceCatalogPublicationId = publicationId,
+            sourceCatalogRevisionId = "revision-123456"
+        )
+
+        assertEquals(setOf(publicationId), repository.getCatalogImportIds())
+        assertEquals(first.id, repository.findCatalogImportedGameId(publicationId))
+        try {
+            repository.importGame(
+                draft, UUID.randomUUID().toString(), listOf(emptyList(), emptyList()),
+                sourceCatalogPublicationId = publicationId,
+                sourceCatalogRevisionId = "revision-654321"
+            )
+            throw AssertionError("Duplicate catalogue import should be rejected")
+        } catch (exception: com.qrhry.app.domain.UserMessageException) {
+            assertEquals(com.qrhry.app.domain.UserMessageKey.CATALOG_ALREADY_IMPORTED, exception.messageKey)
+        }
+        assertEquals(1, repository.getAllGames().size)
+    }
+
+    @Test
     fun editingReordersAndRemovesOptionsWithoutChangingTaskIdentity() {
         val original = task("Question", optionTexts = listOf("A", "B", "C"))
         val game = createGame(listOf(original))
@@ -848,7 +876,15 @@ class GameTaskRepositoryTest {
         databaseHelper = GameDatabaseHelper(context, databaseName)
         repository = GameRepository(databaseHelper)
         val db = databaseHelper.readableDatabase
-        assertEquals(10, db.version)
+        assertEquals(11, db.version)
+        assertTrue(db.rawQuery("SELECT source_catalog_publication_id, source_catalog_revision_id FROM games LIMIT 0", null).use { cursor ->
+            cursor.columnNames.toSet().containsAll(setOf("source_catalog_publication_id", "source_catalog_revision_id"))
+        })
+        assertTrue(db.rawQuery("PRAGMA index_list(games)", null).use { cursor ->
+            var found = false
+            while (cursor.moveToNext()) if (cursor.getString(1) == "index_games_source_catalog_publication") found = true
+            found
+        })
         assertNull(db.rawQuery("SELECT time_limit_seconds FROM tasks WHERE id = 'task-v7'", null).use {
             it.moveToFirst(); if (it.isNull(0)) null else it.getInt(0)
         })

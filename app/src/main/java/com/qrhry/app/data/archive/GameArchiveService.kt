@@ -133,7 +133,6 @@ class GameArchiveService(
     fun inspectImport(source: Uri): GameArchiveImportPreview {
         val token = UUID.randomUUID().toString()
         val archiveFile = File(cacheDirectory, "qrhry-import-$token.qrhry")
-        val stagingDirectory = File(cacheDirectory, "qrhry-import-$token")
         try {
             cacheDirectory.mkdirs()
             val input = contentResolver.openInputStream(source)
@@ -143,23 +142,58 @@ class GameArchiveService(
                     copyLimited(stream, output, GameArchiveLimits.MAX_ARCHIVE_BYTES)
                 }
             }
-            val bundle = codec.read(archiveFile, stagingDirectory)
-            val preview = GameArchiveImportPreview(
-                token = token,
-                title = bundle.manifest.title,
-                scoringMode = bundle.manifest.scoringMode,
-                stationCount = bundle.manifest.stations.size,
-                taskCount = bundle.manifest.stations.sumOf { it.tasks.size },
-                mediaCount = bundle.manifest.stations.sumOf { it.media.size }
-            )
-            stagedImports[token] = StagedImport(archiveFile, stagingDirectory, bundle)
-            return preview
+            return stageImport(token, archiveFile)
         } catch (exception: Exception) {
             archiveFile.delete()
-            stagingDirectory.deleteRecursively()
             if (exception is UserMessageException) throw exception
             throw UserMessageException(UserMessageKey.ARCHIVE_INVALID)
         }
+    }
+
+    @Synchronized
+    fun inspectCatalogImport(source: File, publicationId: String, revisionId: String): GameArchiveImportPreview {
+        val token = UUID.randomUUID().toString()
+        val archiveFile = File(cacheDirectory, "qrhry-import-$token.qrhry")
+        try {
+            if (!source.isFile || source.length() > GameArchiveLimits.MAX_ARCHIVE_BYTES) {
+                throw UserMessageException(UserMessageKey.ARCHIVE_LIMIT_EXCEEDED)
+            }
+            FileInputStream(source).use { input ->
+                FileOutputStream(archiveFile).use { output ->
+                    copyLimited(input, output, GameArchiveLimits.MAX_ARCHIVE_BYTES)
+                }
+            }
+            return stageImport(token, archiveFile, publicationId, revisionId)
+        } catch (exception: Exception) {
+            archiveFile.delete()
+            File(cacheDirectory, "qrhry-import-$token").deleteRecursively()
+            if (exception is UserMessageException) throw exception
+            throw UserMessageException(UserMessageKey.ARCHIVE_INVALID)
+        }
+    }
+
+    private fun stageImport(
+        token: String,
+        archiveFile: File,
+        sourceCatalogPublicationId: String? = null,
+        sourceCatalogRevisionId: String? = null
+    ): GameArchiveImportPreview {
+        val stagingDirectory = File(cacheDirectory, "qrhry-import-$token")
+        val bundle = codec.read(archiveFile, stagingDirectory)
+        val preview = GameArchiveImportPreview(
+            token = token,
+            title = bundle.manifest.title,
+            scoringMode = bundle.manifest.scoringMode,
+            stationCount = bundle.manifest.stations.size,
+            taskCount = bundle.manifest.stations.sumOf { it.tasks.size },
+            mediaCount = bundle.manifest.stations.sumOf { it.media.size },
+            sourceCatalogPublicationId = sourceCatalogPublicationId,
+            sourceCatalogRevisionId = sourceCatalogRevisionId
+        )
+        stagedImports[token] = StagedImport(
+            archiveFile, stagingDirectory, bundle, sourceCatalogPublicationId, sourceCatalogRevisionId
+        )
+        return preview
     }
 
     @Synchronized
@@ -178,7 +212,14 @@ class GameArchiveService(
             assetStore.promoteArchiveAssets(stagedAssets)
             val draft = stagedImport.bundle.manifest.toGameDraft()
             val route = stagedImport.bundle.manifest.toRouteDraft()
-            return repository.importGame(draft, gameUuid, stagedAssets.mediaByStation, route)
+            return repository.importGame(
+                draft,
+                gameUuid,
+                stagedAssets.mediaByStation,
+                route,
+                stagedImport.sourceCatalogPublicationId,
+                stagedImport.sourceCatalogRevisionId
+            )
         } catch (exception: Exception) {
             stagedAssets?.let(assetStore::discardArchiveAssets)
             if (exception is UserMessageException) throw exception
@@ -267,7 +308,9 @@ class GameArchiveService(
     private data class StagedImport(
         val archiveFile: File,
         val stagingDirectory: File,
-        val bundle: GameArchiveBundle
+        val bundle: GameArchiveBundle,
+        val sourceCatalogPublicationId: String? = null,
+        val sourceCatalogRevisionId: String? = null
     ) {
         fun cleanup() {
             archiveFile.delete()
@@ -286,5 +329,7 @@ data class GameArchiveImportPreview(
     val scoringMode: TaskScoringMode,
     val stationCount: Int,
     val taskCount: Int,
-    val mediaCount: Int
+    val mediaCount: Int,
+    val sourceCatalogPublicationId: String? = null,
+    val sourceCatalogRevisionId: String? = null
 )

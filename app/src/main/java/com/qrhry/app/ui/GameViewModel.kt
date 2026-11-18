@@ -44,6 +44,7 @@ import kotlinx.coroutines.sync.withLock
 
 data class GameScreenState(
     val games: List<Game> = emptyList(),
+    val catalogImportedPublicationIds: Set<String> = emptySet(),
     val activeSessions: Map<Long, GameSession> = emptyMap(),
     val completedSessions: List<CompletedSessionResult> = emptyList(),
     val isLoading: Boolean = true,
@@ -86,7 +87,8 @@ enum class GameScreenRoute {
     PLAY_LIST,
     PLAY_SESSION,
     SCANNER,
-    STATION
+    STATION,
+    CATALOG
 }
 
 enum class QrScanStatus {
@@ -185,7 +187,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     archivePreview = null,
                     isProcessingArchive = false,
                     savedGameId = game.id,
-                    archiveSuccess = ArchiveUiSuccess.IMPORTED
+                    archiveSuccess = ArchiveUiSuccess.IMPORTED,
+                    route = GameScreenRoute.CREATE
                 )
                 refreshGames()
             } catch (exception: Exception) {
@@ -606,17 +609,20 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(isLoading = true, error = null)
             try {
-                val (games, activeSessions, completedSessions) = withContext(Dispatchers.IO) {
+                val data = withContext(Dispatchers.IO) {
                     Triple(
-                        repository.getAllGames().map(::hydrateGame),
-                        repository.getActiveSessions().associateBy { it.gameId },
-                        repository.getCompletedSessionResults()
+                        Triple(repository.getAllGames().map(::hydrateGame), repository.getActiveSessions().associateBy { it.gameId }, repository.getCompletedSessionResults()),
+                        repository.getCatalogImportIds(),
+                        Unit
                     )
                 }
+                val (games, activeSessions, completedSessions) = data.first
+                val importedIds = data.second
                 mutableState.value = mutableState.value.copy(
                     games = games,
                     activeSessions = activeSessions,
                     completedSessions = completedSessions,
+                    catalogImportedPublicationIds = importedIds,
                     isLoading = false
                 )
             } catch (exception: Exception) {
@@ -648,6 +654,29 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             settingsReturnRoute = mutableState.value.route,
             route = GameScreenRoute.SETTINGS
         )
+    }
+
+    fun openCatalog() {
+        mutableState.value = mutableState.value.copy(route = GameScreenRoute.CATALOG)
+    }
+
+    suspend fun createCatalogArchive(gameId: Long): java.io.File = withContext(Dispatchers.IO) {
+        val archive = java.io.File(getApplication<Application>().cacheDir, "publish-${java.util.UUID.randomUUID()}.qrhry")
+        archiveService.exportGameToFile(gameId, archive)
+        archive
+    }
+
+    suspend fun inspectCatalogArchive(file: java.io.File, publicationId: String, revisionId: String): Boolean {
+        if (mutableState.value.isProcessingArchive) return false
+        mutableState.value = mutableState.value.copy(isProcessingArchive = true, error = null, archiveSuccess = null)
+        return try {
+            val preview = withContext(Dispatchers.IO) { archiveService.inspectCatalogImport(file, publicationId, revisionId) }
+            mutableState.value = mutableState.value.copy(archivePreview = preview, isProcessingArchive = false, route = GameScreenRoute.CREATE)
+            true
+        } catch (exception: Exception) {
+            mutableState.value = mutableState.value.copy(isProcessingArchive = false, error = exception.messageKeyOr(UserMessageKey.ARCHIVE_INVALID))
+            false
+        }
     }
 
     fun openPlayList() {
@@ -813,6 +842,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.value = when (mutableState.value.route) {
             GameScreenRoute.HOME -> mutableState.value
             GameScreenRoute.SETTINGS -> mutableState.value.copy(route = mutableState.value.settingsReturnRoute)
+            GameScreenRoute.CATALOG -> mutableState.value.copy(route = GameScreenRoute.HOME)
             GameScreenRoute.CREATE, GameScreenRoute.EDIT_STATION, GameScreenRoute.EDIT_ROUTE, GameScreenRoute.PLAY_LIST -> mutableState.value.copy(
                 route = GameScreenRoute.HOME
             )

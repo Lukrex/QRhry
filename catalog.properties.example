@@ -1,0 +1,9 @@
+# Copy to catalog.properties and fill from the Firebase Android app settings.
+# This file contains public client configuration only; never place service-account keys here.
+firebase.apiKey=
+firebase.appId=
+firebase.projectId=
+firebase.storageBucket=
+# Optional: debug builds only. Use 10.0.2.2 for the Android emulator,
+# or your computer's LAN IP for a physical phone on the same Wi-Fi.
+firebase.emulatorHost=

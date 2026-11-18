@@ -311,6 +311,7 @@ private val stationEditorDraftSaver = listSaver<StationEditorDraftState, String>
 @Composable
 fun GameScreen(
     viewModel: GameViewModel,
+    catalogViewModel: CatalogViewModel,
     isDarkMode: Boolean,
     onDarkModeChange: (Boolean) -> Unit,
     onLaunchQrScanner: () -> Unit
@@ -379,7 +380,8 @@ fun GameScreen(
         GameScreenRoute.HOME -> HomeScreen(
             onCreate = viewModel::openCreate,
             onPlay = viewModel::openPlayList,
-            onSettings = viewModel::openSettings
+            onSettings = viewModel::openSettings,
+            onDiscover = viewModel::openCatalog
         )
         GameScreenRoute.SETTINGS -> SettingsScreen(
             selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language ?: "sk",
@@ -448,6 +450,14 @@ fun GameScreen(
         GameScreenRoute.STATION -> state.selectedStation?.let { station ->
             StationDetailScreen(station, onBack = viewModel::navigateBack)
         }
+        GameScreenRoute.CATALOG -> CatalogScreen(
+            gameState = state,
+            viewModel = catalogViewModel,
+            onBack = viewModel::navigateBack,
+            openLocalGames = viewModel::openCreate,
+            createArchive = viewModel::createCatalogArchive,
+            inspectArchive = viewModel::inspectCatalogArchive
+        )
     }
         }
     }
@@ -457,6 +467,7 @@ private fun isForwardRouteTransition(from: GameScreenRoute, to: GameScreenRoute)
     GameScreenRoute.HOME to GameScreenRoute.SETTINGS,
     GameScreenRoute.HOME to GameScreenRoute.CREATE,
     GameScreenRoute.HOME to GameScreenRoute.PLAY_LIST,
+    GameScreenRoute.HOME to GameScreenRoute.CATALOG,
     GameScreenRoute.CREATE to GameScreenRoute.EDIT_STATION,
     GameScreenRoute.CREATE to GameScreenRoute.EDIT_ROUTE,
     GameScreenRoute.PLAY_LIST to GameScreenRoute.PLAY_SESSION,
@@ -467,7 +478,7 @@ private fun isForwardRouteTransition(from: GameScreenRoute, to: GameScreenRoute)
 }
 
 @Composable
-private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () -> Unit) {
+private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () -> Unit, onDiscover: () -> Unit) {
     var hasEntered by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { hasEntered = true }
     val logoAlpha by animateFloatAsState(
@@ -481,7 +492,7 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
         label = "homeLogoScale"
     )
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val pinSettingsAtBottom = maxHeight >= 620.dp
+        val pinSettingsAtBottom = maxHeight >= 720.dp
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -554,6 +565,10 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
                 primary = true,
                 onClick = onPlay
             )
+        }
+
+        OutlinedButton(onClick = onDiscover, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+            IconLabel(QRhryIconKind.LOCATION, stringResource(R.string.catalog_discover))
         }
         AnimatedVisibility(
             visible = hasEntered,
@@ -826,6 +841,19 @@ private fun userMessageText(key: UserMessageKey): String = stringResource(
         UserMessageKey.ROUTE_CYCLE -> R.string.error_route_cycle
         UserMessageKey.ROUTE_MULTIPLE_TASKS -> R.string.error_route_multiple_tasks
         UserMessageKey.ROUTE_ACTIVE_SESSION -> R.string.error_route_active_session
+        UserMessageKey.CATALOG_UNAVAILABLE -> R.string.catalog_error_unavailable
+        UserMessageKey.CATALOG_NETWORK_FAILED -> R.string.catalog_error_network
+        UserMessageKey.CATALOG_ARCHIVE_INVALID -> R.string.catalog_error_archive
+        UserMessageKey.CATALOG_METADATA_INVALID -> R.string.catalog_error_metadata
+        UserMessageKey.CATALOG_AUTH_REQUIRED -> R.string.catalog_error_auth
+        UserMessageKey.CATALOG_EMAIL_UNVERIFIED -> R.string.catalog_error_unverified
+        UserMessageKey.CATALOG_VERIFICATION_FAILED -> R.string.catalog_error_verification
+        UserMessageKey.CATALOG_SIGN_IN_FAILED -> R.string.catalog_error_signin
+        UserMessageKey.CATALOG_PUBLICATION_FAILED -> R.string.catalog_error_publish
+        UserMessageKey.CATALOG_UNPUBLISH_FAILED -> R.string.catalog_error_unpublish
+        UserMessageKey.CATALOG_ALREADY_IMPORTED -> R.string.catalog_error_duplicate
+        UserMessageKey.CATALOG_DOWNLOAD_FAILED -> R.string.catalog_error_download
+        UserMessageKey.CATALOG_UPLOAD_TOO_LARGE -> R.string.catalog_error_size
     }
 )
 

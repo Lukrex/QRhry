@@ -2,4 +2,13 @@
 .gradle/
 **/build/
 local.properties
+catalog.properties
+functions/.env
+functions/.env.*
+!functions/.env.example
+functions/node_modules/
+functions/lib/
+.firebase/
+.firebaserc
+firebase-debug.log
 .kotlin/

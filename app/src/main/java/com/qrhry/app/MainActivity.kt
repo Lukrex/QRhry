@@ -18,10 +18,12 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.qrhry.app.ui.GameScreen
 import com.qrhry.app.ui.GameViewModel
+import com.qrhry.app.ui.CatalogViewModel
 import com.qrhry.app.ui.QRhryTheme
 
 class MainActivity : AppCompatActivity() {
     private val gameViewModel: GameViewModel by viewModels()
+    private val catalogViewModel: CatalogViewModel by viewModels()
     private val preferences by lazy { getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE) }
     private var isDarkMode by mutableStateOf(false)
 
@@ -45,6 +47,7 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     GameScreen(
                         viewModel = gameViewModel,
+                        catalogViewModel = catalogViewModel,
                         isDarkMode = isDarkMode,
                         onDarkModeChange = { enabled ->
                             isDarkMode = enabled

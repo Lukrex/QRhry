@@ -112,7 +112,9 @@ class GameRepository(
         draft: GameDraft,
         gameUuid: String,
         mediaByStation: List<List<StationMedia>>,
-        route: GameRouteDraft? = null
+        route: GameRouteDraft? = null,
+        sourceCatalogPublicationId: String? = null,
+        sourceCatalogRevisionId: String? = null
     ): Game {
         GameDraftValidator.validationError(draft)?.let { throw UserMessageException(it) }
         if (!isCanonicalUuid(gameUuid) || mediaByStation.size != draft.stations.size) {
@@ -136,6 +138,9 @@ class GameRepository(
         val database = databaseHelper.writableDatabase
         database.beginTransaction()
         return try {
+            if (sourceCatalogPublicationId != null && hasCatalogImport(database, sourceCatalogPublicationId)) {
+                throw UserMessageException(UserMessageKey.CATALOG_ALREADY_IMPORTED)
+            }
             val now = nowMillis()
             val gameId = database.insertOrThrow(
                 "games",
@@ -146,6 +151,8 @@ class GameRepository(
                     put("content_version", 1)
                     put("updated_at", now)
                     put("scoring_mode", draft.scoringMode.name)
+                    if (sourceCatalogPublicationId != null) put("source_catalog_publication_id", sourceCatalogPublicationId)
+                    if (sourceCatalogRevisionId != null) put("source_catalog_revision_id", sourceCatalogRevisionId)
                 }
             )
             val importedStations = mutableListOf<Station>()
@@ -194,6 +201,20 @@ class GameRepository(
             database.endTransaction()
         }
     }
+
+    fun findCatalogImportedGameId(publicationId: String): Long? = databaseHelper.readableDatabase.rawQuery(
+        "SELECT id FROM games WHERE source_catalog_publication_id = ? LIMIT 1",
+        arrayOf(publicationId)
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
+
+    fun getCatalogImportIds(): Set<String> = databaseHelper.readableDatabase.rawQuery(
+        "SELECT source_catalog_publication_id FROM games WHERE source_catalog_publication_id IS NOT NULL", null
+    ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    private fun hasCatalogImport(database: SQLiteDatabase, publicationId: String): Boolean = database.rawQuery(
+        "SELECT 1 FROM games WHERE source_catalog_publication_id = ? LIMIT 1",
+        arrayOf(publicationId)
+    ).use { it.moveToFirst() }
 
     fun updateGameRoute(gameId: Long, route: GameRouteDraft): Boolean {
         val database = databaseHelper.writableDatabase
