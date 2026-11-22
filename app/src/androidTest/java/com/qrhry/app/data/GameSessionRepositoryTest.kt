@@ -71,6 +71,69 @@ class GameSessionRepositoryTest {
     }
 
     @Test
+    fun testSessionIsIsolatedFromNormalActiveSessionAndCompletedHistory() {
+        val game = createGame("Test isolation", "One", "Two")
+        val normal = repository.startOrResumeSession(game.id)
+        val test = repository.startTestSession(game.id)
+
+        assertNotEquals(normal.session.id, test.session.id)
+        assertTrue(test.session.isTest)
+        assertEquals(normal.session.id, repository.getActiveSession(game.id)?.id)
+        assertEquals(listOf(normal.session.id), repository.getActiveSessions().map { it.id })
+        repository.recordStationScan(test.session.id, game.stations.first().qrToken)
+        repository.recordStationScan(test.session.id, game.stations.last().qrToken)
+        assertEquals(GameSessionStatus.COMPLETED, repository.getSessionProgress(test.session.id)?.session?.status)
+        assertTrue(repository.getCompletedSessionResults().none { it.sessionId == test.session.id })
+    }
+
+    @Test
+    fun testRouteAdvancesDirectlyToConfiguredNextStationAndNormalSessionRemains() {
+        val game = createGame("Route test", "First", "Second")
+        val normal = repository.startOrResumeSession(game.id)
+        val test = repository.startTestSession(game.id)
+        val startToken = repository.getTestNextStationToken(test.session.id)!!
+        val start = repository.recordStationScan(test.session.id, startToken) as StationScanResult.Accepted
+
+        assertEquals("First", start.station.title)
+        assertEquals("Second", repository.getTestNextStationToken(test.session.id)?.let { token ->
+            game.stations.first { it.qrToken == token }.title
+        })
+        assertEquals(normal.session.id, repository.getActiveSession(game.id)?.id)
+        assertEquals(0, repository.getSessionProgress(normal.session.id)?.completedStationCount)
+    }
+
+    @Test
+    fun testSessionNextStationFollowsConfiguredBranchedAnswerRoute() {
+        val game = createGame("Test branch", "Question", "Correct target", "Wrong target")
+        val question = game.stations[0]
+        val taskId = UUID.randomUUID().toString()
+        val correctId = UUID.randomUUID().toString()
+        val wrongId = UUID.randomUUID().toString()
+        repository.updateStationContent(
+            question.id, question.title, question.bodyText,
+            tasks = listOf(MultipleChoiceTaskDraft(taskId, "Choose", 0, listOf(
+                TaskOptionDraft(correctId, "Correct", 0, true), TaskOptionDraft(wrongId, "Wrong", 1, false)
+            )))
+        )
+        repository.updateGameRoute(game.id, GameRouteDraft(GameProgressionMode.BRANCHED, 0, listOf(
+            RouteTransitionDraft(0, RouteCondition.CORRECT, 1),
+            RouteTransitionDraft(0, RouteCondition.INCORRECT, 2),
+            RouteTransitionDraft(1, RouteCondition.INFO, null),
+            RouteTransitionDraft(2, RouteCondition.INFO, null)
+        )))
+        val normal = repository.startOrResumeSession(game.id)
+        val test = repository.startTestSession(game.id)
+        repository.recordStationScan(test.session.id, game.stations[0].qrToken)
+        repository.savePendingTaskSelection(test.session.id, taskId, correctId)
+        repository.submitTaskAttempt(test.session.id, taskId)
+
+        val nextToken = repository.getTestNextStationToken(test.session.id)
+        assertEquals(game.stations[1].id, game.stations.single { it.qrToken == nextToken }.id)
+        assertEquals(normal.session.id, repository.getActiveSession(game.id)?.id)
+        assertEquals(0, repository.getSessionProgress(normal.session.id)?.completedStationCount)
+    }
+
+    @Test
     fun visitsDetermineNextStationByPosition() {
         val game = createGame("Trail", "First", "Second", "Third")
         val progress = repository.startOrResumeSession(game.id)

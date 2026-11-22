@@ -223,7 +223,7 @@ class GameRepository(
             val stations = getStations(database, gameId)
             if (stations.isEmpty()) throw UserMessageException(UserMessageKey.GAME_HAS_NO_STATIONS)
             if (database.rawQuery(
-                    "SELECT 1 FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS' LIMIT 1",
+                    "SELECT 1 FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS' AND is_test = 0 LIMIT 1",
                     arrayOf(gameId.toString())
                 ).use { it.moveToFirst() }
             ) throw UserMessageException(UserMessageKey.ROUTE_ACTIVE_SESSION)
@@ -439,8 +439,8 @@ class GameRepository(
     fun getActiveSessions(): List<GameSession> {
         val sessions = mutableListOf<GameSession>()
         databaseHelper.readableDatabase.rawQuery(
-            """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id
-                FROM game_sessions WHERE status = 'IN_PROGRESS' ORDER BY updated_at DESC""",
+            """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id, is_test
+                FROM game_sessions WHERE status = 'IN_PROGRESS' AND is_test = 0 ORDER BY updated_at DESC""",
             null
         ).use { cursor ->
             while (cursor.moveToNext()) sessions += cursor.toGameSession()
@@ -450,8 +450,8 @@ class GameRepository(
 
     fun getActiveSession(gameId: Long): GameSession? =
         databaseHelper.readableDatabase.rawQuery(
-            """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id
-                FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS'""",
+            """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id, is_test
+                FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS' AND is_test = 0""",
             arrayOf(gameId.toString())
         ).use { cursor -> if (cursor.moveToFirst()) cursor.toGameSession() else null }
 
@@ -469,7 +469,7 @@ class GameRepository(
                     WHERE station_visits.session_id = game_sessions.id AND completed_at IS NOT NULL),
                 game_sessions.total_station_count
                 FROM game_sessions INNER JOIN games ON games.id = game_sessions.game_id
-                WHERE game_sessions.status = 'COMPLETED'
+                WHERE game_sessions.status = 'COMPLETED' AND game_sessions.is_test = 0
                 ORDER BY game_sessions.completed_at DESC, game_sessions.id DESC""",
             null
         ).use { cursor ->
@@ -478,15 +478,19 @@ class GameRepository(
         return results
     }
 
-    fun startOrResumeSession(gameId: Long): SessionProgress {
+    fun startOrResumeSession(gameId: Long): SessionProgress = startSession(gameId, isTest = false, resume = true)
+
+    fun startTestSession(gameId: Long): SessionProgress = startSession(gameId, isTest = true, resume = false)
+
+    private fun startSession(gameId: Long, isTest: Boolean, resume: Boolean): SessionProgress {
         val database = databaseHelper.writableDatabase
         var sessionId: Long? = null
         database.beginTransaction()
         try {
             database.rawQuery(
-                "SELECT id FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS'",
-                arrayOf(gameId.toString())
-            ).use { cursor -> if (cursor.moveToFirst()) sessionId = cursor.getLong(0) }
+                "SELECT id FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS' AND is_test = ?",
+                arrayOf(gameId.toString(), if (isTest) "1" else "0")
+            ).use { cursor -> if (resume && cursor.moveToFirst()) sessionId = cursor.getLong(0) }
 
             if (sessionId == null) {
                 val scoringMode = database.rawQuery(
@@ -510,6 +514,7 @@ class GameRepository(
                     ContentValues().apply {
                         put("game_id", gameId)
                         put("status", GameSessionStatus.IN_PROGRESS.name)
+                        put("is_test", if (isTest) 1 else 0)
                         put("scoring_mode", scoringMode.name)
                         put("created_at", now)
                         put("updated_at", now)
@@ -532,6 +537,12 @@ class GameRepository(
         return checkNotNull(getSessionProgress(checkNotNull(sessionId)))
     }
 
+    fun getTestNextStationToken(sessionId: Long): String? {
+        val progress = getSessionProgress(sessionId) ?: return null
+        if (!progress.session.isTest || progress.session.status != GameSessionStatus.IN_PROGRESS) return null
+        return progress.nextStation?.qrToken
+    }
+
     fun getSessionProgress(sessionId: Long): SessionProgress? {
         val database = databaseHelper.readableDatabase
         val session: GameSession
@@ -539,7 +550,7 @@ class GameRepository(
         database.rawQuery(
             """SELECT game_sessions.id, game_sessions.game_id, game_sessions.status,
                 game_sessions.created_at, game_sessions.updated_at, game_sessions.completed_at,
-                game_sessions.scoring_mode, game_sessions.expected_station_id,
+                game_sessions.scoring_mode, game_sessions.expected_station_id, game_sessions.is_test,
                 games.title
                 FROM game_sessions INNER JOIN games ON games.id = game_sessions.game_id
                 WHERE game_sessions.id = ?""",
@@ -547,7 +558,7 @@ class GameRepository(
         ).use { cursor ->
             if (!cursor.moveToFirst()) return null
             session = cursor.toGameSession()
-            gameTitle = cursor.getString(8)
+            gameTitle = cursor.getString(9)
         }
         return loadSessionProgress(database, session, gameTitle)
     }
@@ -559,7 +570,7 @@ class GameRepository(
         database.beginTransaction()
         try {
             val session = database.rawQuery(
-                """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id
+                """SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id, is_test
                     FROM game_sessions WHERE id = ?""",
                 arrayOf(sessionId.toString())
             ).use { cursor -> if (cursor.moveToFirst()) cursor.toGameSession() else null }
@@ -1079,7 +1090,7 @@ class GameRepository(
 
     private fun getSession(database: SQLiteDatabase, sessionId: Long): GameSession? =
         database.rawQuery(
-            "SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id FROM game_sessions WHERE id = ?",
+            "SELECT id, game_id, status, created_at, updated_at, completed_at, scoring_mode, expected_station_id, is_test FROM game_sessions WHERE id = ?",
             arrayOf(sessionId.toString())
         ).use { cursor -> if (cursor.moveToFirst()) cursor.toGameSession() else null }
 
@@ -1401,7 +1412,7 @@ class GameRepository(
         val current = getTasks(database, stationId)
         if (current.matchesDrafts(drafts)) return
         val hasActiveSession = database.rawQuery(
-            "SELECT 1 FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS' LIMIT 1",
+            "SELECT 1 FROM game_sessions WHERE game_id = ? AND status = 'IN_PROGRESS' AND is_test = 0 LIMIT 1",
             arrayOf(gameId.toString())
         ).use { it.moveToFirst() }
         if (hasActiveSession) throw UserMessageException(UserMessageKey.TASK_EDIT_ACTIVE_SESSION)
@@ -1599,7 +1610,8 @@ class GameRepository(
         updatedAt = getLong(4),
         completedAt = if (isNull(5)) null else getLong(5),
         scoringMode = TaskScoringMode.valueOf(getString(6)),
-        expectedStationId = if (columnCount > 7 && !isNull(7)) getLong(7) else null
+        expectedStationId = if (columnCount > 7 && !isNull(7)) getLong(7) else null,
+        isTest = columnCount > 8 && getInt(8) == 1
     )
 
     private fun android.database.Cursor.toCompletedSessionResult() = CompletedSessionResult(

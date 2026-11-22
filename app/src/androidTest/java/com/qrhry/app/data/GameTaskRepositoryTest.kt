@@ -766,6 +766,30 @@ class GameTaskRepositoryTest {
     }
 
     @Test
+    fun timedTaskRetryGetsFreshDeadlineAndCanBeSkippedAfterWrongAnswer() {
+        var now = 2_000_000L
+        repository = GameRepository(databaseHelper) { now }
+        val timed = task("Timed retry", timeLimitSeconds = 30)
+        val game = createGame(listOf(timed))
+        val session = repository.startOrResumeSession(game.id).session
+        repository.recordStationScan(session.id, game.stations.first().qrToken)
+
+        val firstDeadline = checkNotNull(repository.activateTaskTimer(session.id, timed.id))
+        repository.savePendingTaskSelection(session.id, timed.id, timed.options.first { !it.isCorrect }.id)
+        val wrong = repository.submitTaskAttempt(session.id, timed.id) as TaskSubmissionResult.Submitted
+        assertFalse(wrong.isCorrect)
+        assertNull(wrong.progress.taskProgress.single().deadlineAt)
+
+        now += 1_000
+        val retryDeadline = checkNotNull(repository.activateTaskTimer(session.id, timed.id))
+        assertTrue(retryDeadline > firstDeadline)
+        val skipped = repository.continueTaskAfterWrongAnswer(session.id, timed.id)
+        assertEquals(1, skipped.completedTaskCount)
+        assertTrue(game.stations.first().id in skipped.completedStationIds)
+        assertEquals(game.stations[1].id, skipped.nextStation?.id)
+    }
+
+    @Test
     fun timerStartsOnceAndTimeoutCompletesTaskWithoutPoints() {
         var now = 1_000_000L
         repository = GameRepository(databaseHelper) { now }
@@ -876,7 +900,7 @@ class GameTaskRepositoryTest {
         databaseHelper = GameDatabaseHelper(context, databaseName)
         repository = GameRepository(databaseHelper)
         val db = databaseHelper.readableDatabase
-        assertEquals(11, db.version)
+        assertEquals(GameDatabaseHelper.DATABASE_VERSION, db.version)
         assertTrue(db.rawQuery("SELECT source_catalog_publication_id, source_catalog_revision_id FROM games LIMIT 0", null).use { cursor ->
             cursor.columnNames.toSet().containsAll(setOf("source_catalog_publication_id", "source_catalog_revision_id"))
         })

@@ -302,4 +302,11 @@
     <string name="error_route_cycle">Trasa sa nemôže vracať na predchádzajúce stanovište.</string>
     <string name="error_route_multiple_tasks">Vetvené stanovište môže mať v tejto verzii iba jednu úlohu.</string>
     <string name="error_route_active_session">Pred zmenou trasy dokončite aktívnu hru.</string>
+    <string name="test_game">Vyskúšať hru</string>
+    <string name="print_qr_codes">Vytlačiť QR kódy</string>
+    <string name="test_mode_active">REŽIM TESTOVANIA — postup sa ukladá oddelene od skutočných hier.</string>
+    <string name="leave_test">Ukončiť test</string>
+    <string name="restart_test">Spustiť test znova</string>
+    <string name="start_test">Začať test</string>
+    <string name="share_qr_pdf">Zdieľať PDF s QR kódmi stanovíšť</string>
 </resources>

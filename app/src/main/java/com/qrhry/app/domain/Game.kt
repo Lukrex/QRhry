@@ -284,7 +284,8 @@ data class GameSession(
     val updatedAt: Long,
     val completedAt: Long?,
     val scoringMode: TaskScoringMode = TaskScoringMode.EVENTUAL_CORRECT,
-    val expectedStationId: Long? = null
+    val expectedStationId: Long? = null,
+    val isTest: Boolean = false
 )
 
 data class CompletedSessionResult(

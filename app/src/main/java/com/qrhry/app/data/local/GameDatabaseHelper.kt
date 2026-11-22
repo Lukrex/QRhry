@@ -48,6 +48,7 @@ class GameDatabaseHelper(
         migrateV8ToV9(db)
         migrateV9ToV10(db)
         migrateV10ToV11(db)
+        migrateV11ToV12(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -93,6 +94,10 @@ class GameDatabaseHelper(
                 10 -> {
                     migrateV10ToV11(db)
                     version = 11
+                }
+                11 -> {
+                    migrateV11ToV12(db)
+                    version = 12
                 }
                 else -> throw SQLiteException(
                     "No migration is defined from database version $version to $newVersion."
@@ -260,9 +265,9 @@ class GameDatabaseHelper(
     }
 
     private fun migrateV10ToV11(db: SQLiteDatabase) {
-        db.execSQL("ALTER TABLE games ADD COLUMN source_catalog_publication_id TEXT")
-        db.execSQL("ALTER TABLE games ADD COLUMN source_catalog_revision_id TEXT")
-        db.execSQL(
+        if (!hasColumn(db, "games", "source_catalog_publication_id")) db.execSQL("ALTER TABLE games ADD COLUMN source_catalog_publication_id TEXT")
+        if (!hasColumn(db, "games", "source_catalog_revision_id")) db.execSQL("ALTER TABLE games ADD COLUMN source_catalog_revision_id TEXT")
+        if (!indexExists(db, "index_games_source_catalog_publication")) db.execSQL(
             "CREATE UNIQUE INDEX index_games_source_catalog_publication ON games(source_catalog_publication_id) WHERE source_catalog_publication_id IS NOT NULL"
         )
     }
@@ -322,6 +327,13 @@ class GameDatabaseHelper(
                 )
                 WHERE status = 'IN_PROGRESS'"""
         )
+    }
+
+    private fun migrateV11ToV12(db: SQLiteDatabase) {
+        if (!hasColumn(db, "game_sessions", "is_test")) db.execSQL("ALTER TABLE game_sessions ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0 CHECK (is_test IN (0, 1))")
+        if (indexExists(db, "index_game_sessions_one_active_per_game")) db.execSQL("DROP INDEX index_game_sessions_one_active_per_game")
+        if (!indexExists(db, "index_game_sessions_one_active_per_game")) db.execSQL("CREATE UNIQUE INDEX index_game_sessions_one_active_per_game ON game_sessions(game_id) WHERE status = 'IN_PROGRESS' AND is_test = 0")
+        if (!indexExists(db, "index_game_sessions_test_active")) db.execSQL("CREATE INDEX index_game_sessions_test_active ON game_sessions(game_id, status, is_test)")
     }
 
     private fun createStationMediaTable(db: SQLiteDatabase) {
@@ -470,6 +482,6 @@ class GameDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "qrhry.db"
-        const val DATABASE_VERSION = 11
+        const val DATABASE_VERSION = 12
     }
 }

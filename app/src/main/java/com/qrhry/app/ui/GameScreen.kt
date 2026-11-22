@@ -3,6 +3,7 @@ package com.qrhry.app.ui
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.content.Intent
+import android.content.ClipData
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -318,6 +319,17 @@ fun GameScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    LaunchedEffect(state.printablePdfUri) {
+        val uri = state.printablePdfUri ?: return@LaunchedEffect
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = ClipData.newUri(context.contentResolver, context.getString(R.string.print_qr_codes), uri)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.share_qr_pdf)))
+        viewModel.clearPrintablePdfUri()
+    }
     val saveableStateHolder = rememberSaveableStateHolder()
     var pendingPick by remember { mutableStateOf<PendingMediaPick?>(null) }
     var pendingExportGameId by remember { mutableStateOf<Long?>(null) }
@@ -400,6 +412,8 @@ fun GameScreen(
                 pendingExportGameId = game.id
                 archiveExporter.launch(gameArchiveFilename(game.title))
             },
+            onPrintQr = { viewModel.printGameQrCodes(it.id) },
+            onTestGame = { viewModel.startTestGame(it.id) },
             onImportArchive = { archiveImporter.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }
         )
         GameScreenRoute.EDIT_STATION -> state.editingStation?.let { station ->
@@ -428,6 +442,7 @@ fun GameScreen(
                 progress = progress,
                 scanResult = state.stationScanResult,
                 isLoading = state.isLoadingSession,
+                isTestMode = progress.session.isTest,
                 isSubmittingAnswer = state.isSavingTaskAnswer,
                 taskSkippedFeedback = state.taskSkippedFeedback,
                 taskTimeoutFeedback = state.taskTimeoutFeedback,
@@ -437,6 +452,8 @@ fun GameScreen(
                 onSubmitTask = viewModel::submitTaskAnswer,
                 onContinueTask = viewModel::continueTaskAfterWrongAnswer,
                 onScan = viewModel::openSessionScanner,
+                onNextTestStation = viewModel::advanceTestRoute,
+                onRestartTest = viewModel::restartTestGame,
                 onBack = viewModel::navigateBack
             )
         }
@@ -879,6 +896,8 @@ private fun GameLibraryScreen(
     viewModel: GameViewModel,
     onPickMedia: (StationMediaType, (Uri) -> Unit) -> Unit,
     onExportGame: (Game) -> Unit,
+    onPrintQr: (Game) -> Unit,
+    onTestGame: (Game) -> Unit,
     onImportArchive: () -> Unit
 ) {
     var gameTitle by rememberSaveable { mutableStateOf("") }
@@ -1088,6 +1107,8 @@ private fun GameLibraryScreen(
                         onEditRoute = viewModel::editGameRoute,
                         onScoringModeChange = viewModel::updateGameScoringMode,
                         onExport = onExportGame,
+                        onPrintQr = onPrintQr,
+                        onTestGame = onTestGame,
                         isExporting = state.isProcessingArchive
                     )
                 }
@@ -1243,6 +1264,7 @@ private fun PlaySessionScreen(
     progress: SessionProgress,
     scanResult: StationScanResult?,
     isLoading: Boolean,
+    isTestMode: Boolean,
     isSubmittingAnswer: Boolean,
     taskSkippedFeedback: Boolean,
     taskTimeoutFeedback: Boolean,
@@ -1252,6 +1274,8 @@ private fun PlaySessionScreen(
     onSubmitTask: (String, TaskAnswer?) -> Unit,
     onContinueTask: (String) -> Unit,
     onScan: () -> Unit,
+    onNextTestStation: () -> Unit,
+    onRestartTest: () -> Unit,
     onBack: () -> Unit
 ) {
     val acceptedScan = scanResult as? StationScanResult.Accepted
@@ -1266,7 +1290,13 @@ private fun PlaySessionScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         OutlinedButton(onClick = onBack) {
-            IconLabel(QRhryIconKind.BACK, stringResource(R.string.back_to_play))
+            IconLabel(QRhryIconKind.BACK, stringResource(if (isTestMode) R.string.leave_test else R.string.back_to_play))
+        }
+        if (isTestMode) {
+            StatusMessage(stringResource(R.string.test_mode_active), icon = QRhryIconKind.RESULTS)
+            OutlinedButton(onClick = onRestartTest, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
+                IconLabel(QRhryIconKind.FORWARD, stringResource(R.string.restart_test))
+            }
         }
         Text(progress.gameTitle, style = MaterialTheme.typography.headlineSmall)
         if (!isCompleted) {
@@ -1381,18 +1411,22 @@ private fun PlaySessionScreen(
                 }
             } else if (progress.stationVisits.isEmpty()) {
                 Text(stringResource(R.string.first_qr_intro))
-                Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
-                    IconLabel(QRhryIconKind.SCAN, stringResource(R.string.scan_first_qr))
+                Button(onClick = if (isTestMode) onNextTestStation else onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
+                    IconLabel(if (isTestMode) QRhryIconKind.FORWARD else QRhryIconKind.SCAN, stringResource(if (isTestMode) R.string.start_test else R.string.scan_first_qr))
                 }
             } else {
                 progress.nextStation?.let { next ->
                     Text(stringResource(R.string.next_station), style = MaterialTheme.typography.titleMedium)
                     Text(next.title, style = MaterialTheme.typography.headlineSmall)
-                    if (progress.routeMode == GameProgressionMode.BRANCHED) {
-                        Text(stringResource(R.string.route_next_scan, next.title))
-                    }
-                    Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
-                        IconLabel(QRhryIconKind.SCAN, stringResource(R.string.scan_station))
+                    if (isTestMode) {
+                        Button(onClick = onNextTestStation, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
+                            IconLabel(QRhryIconKind.FORWARD, stringResource(R.string.next_station))
+                        }
+                    } else {
+                        if (progress.routeMode == GameProgressionMode.BRANCHED) Text(stringResource(R.string.route_next_scan, next.title))
+                        Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
+                            IconLabel(QRhryIconKind.SCAN, stringResource(R.string.scan_station))
+                        }
                     }
                 }
             }
@@ -1581,6 +1615,8 @@ private fun SavedGame(
     onEditRoute: (Game) -> Unit,
     onScoringModeChange: (Long, TaskScoringMode) -> Unit,
     onExport: (Game) -> Unit,
+    onPrintQr: (Game) -> Unit,
+    onTestGame: (Game) -> Unit,
     isExporting: Boolean
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -1593,6 +1629,12 @@ private fun SavedGame(
                 scoringMode = game.scoringMode,
                 onScoringModeChange = { onScoringModeChange(game.id, it) }
             )
+            OutlinedButton(onClick = { onTestGame(game) }, modifier = Modifier.fillMaxWidth()) {
+                IconLabel(QRhryIconKind.PLAY, stringResource(R.string.test_game))
+            }
+            OutlinedButton(onClick = { onPrintQr(game) }, enabled = !isExporting, modifier = Modifier.fillMaxWidth()) {
+                IconLabel(QRhryIconKind.EXPORT, stringResource(R.string.print_qr_codes))
+            }
             OutlinedButton(onClick = { onEditRoute(game) }, modifier = Modifier.fillMaxWidth()) {
                 IconLabel(QRhryIconKind.EDIT, stringResource(R.string.edit_game_route))
             }
@@ -2181,8 +2223,16 @@ private fun MultipleChoiceTaskPlayer(
 ) {
     val timerReady = progress.task.timeLimitSeconds == null || progress.deadlineAt != null || progress.isCompleted
     var nowMillis by remember(progress.task.id) { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(progress.task.id, progress.isCompleted, progress.task.timeLimitSeconds) {
-        if (progress.task.timeLimitSeconds != null && !progress.isCompleted) onActivateTimer(System.currentTimeMillis())
+    LaunchedEffect(
+        progress.task.id,
+        progress.isCompleted,
+        progress.task.timeLimitSeconds,
+        progress.deadlineAt,
+        progress.lastSubmittedAttempt?.id
+    ) {
+        if (progress.task.timeLimitSeconds != null && !progress.isCompleted && progress.deadlineAt == null) {
+            onActivateTimer(System.currentTimeMillis())
+        }
     }
     LaunchedEffect(progress.deadlineAt, progress.isCompleted) {
         val deadline = progress.deadlineAt ?: return@LaunchedEffect

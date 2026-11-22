@@ -103,3 +103,17 @@ limits, and failure compensation are specified in `game-archive-format.md`;
 startup recovery removes staging/orphan directories older than 24 hours, so a
 recent in-progress import is not mistaken for abandoned work. SQLite is at
 schema v11. The current app imports v1–v3 archives; v1/v2 are linear.
+
+## Test runs and printable QR sheets
+
+Test runs use the same session repository and gameplay transitions as regular
+play, including evaluation, scoring, timers, and configured branching. A
+session-level test flag isolates these runs from normal active-session lookup,
+completed history, and statistics; regular sessions remain untouched. In test
+mode the UI advances directly to the repository's configured next station,
+without scanning.
+
+Printable station QR sheets are generated locally in the data layer with
+Android `PdfDocument` and the existing ZXing QR generator/payload. PDFs are A4
+portrait with six stations per page and are shared as temporary cache-backed
+FileProvider content URIs. No network service or extra QR dependency is used.

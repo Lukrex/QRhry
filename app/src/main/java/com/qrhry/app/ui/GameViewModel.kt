@@ -9,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.qrhry.app.data.GameRepository
 import com.qrhry.app.data.local.GameDatabaseHelper
 import com.qrhry.app.data.local.GameAssetStore
+import com.qrhry.app.data.local.StationQrPdfService
+import androidx.core.content.FileProvider
 import com.qrhry.app.data.local.ImportedAsset
 import com.qrhry.app.data.archive.GameArchiveImportPreview
 import com.qrhry.app.data.archive.GameArchiveService
@@ -70,7 +72,9 @@ data class GameScreenState(
     val taskTimeoutFeedback: Boolean = false,
     val archivePreview: GameArchiveImportPreview? = null,
     val isProcessingArchive: Boolean = false,
-    val archiveSuccess: ArchiveUiSuccess? = null
+    val archiveSuccess: ArchiveUiSuccess? = null,
+    val printablePdfUri: Uri? = null,
+    val testReturnRoute: GameScreenRoute = GameScreenRoute.CREATE
 )
 
 enum class ArchiveUiSuccess {
@@ -102,6 +106,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val taskAnswerMutex = Mutex()
     private val repository = GameRepository(GameDatabaseHelper(application))
     private val assetStore = GameAssetStore(application.filesDir)
+    private val stationQrPdfService = StationQrPdfService(application)
     private val archiveService = GameArchiveService(
         contentResolver = application.contentResolver,
         cacheDirectory = application.cacheDir,
@@ -713,6 +718,73 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun startTestGame(gameId: Long) {
+        if (mutableState.value.isLoadingSession) return
+        val current = mutableState.value
+        val returnRoute = current.sessionProgress?.session?.takeIf { it.isTest }?.let { current.testReturnRoute }
+            ?: current.route
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(isLoadingSession = true, error = null)
+            try {
+                val progress = withContext(Dispatchers.IO) { hydrateProgress(repository.startTestSession(gameId)) }
+                mutableState.value = mutableState.value.copy(
+                    route = GameScreenRoute.PLAY_SESSION, sessionProgress = progress,
+                    stationScanResult = null, taskSkippedFeedback = false, taskTimeoutFeedback = false,
+                    testReturnRoute = returnRoute, isLoadingSession = false
+                )
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(isLoadingSession = false, error = exception.messageKeyOr(UserMessageKey.SESSION_START_FAILED))
+            }
+        }
+    }
+
+    fun advanceTestRoute() {
+        val sessionId = mutableState.value.sessionProgress?.session?.takeIf { it.isTest && it.status == GameSessionStatus.IN_PROGRESS }?.id ?: return
+        viewModelScope.launch {
+            try {
+                val nextToken = withContext(Dispatchers.IO) { repository.getTestNextStationToken(sessionId) }
+                if (nextToken == null) {
+                    val latest = withContext(Dispatchers.IO) {
+                        repository.getSessionProgress(sessionId)?.let(::hydrateProgress)
+                    }
+                    if (latest != null) mutableState.value = mutableState.value.copy(sessionProgress = latest)
+                } else {
+                    val hydratedResult = withContext(Dispatchers.IO) {
+                        hydrateScanResult(repository.recordStationScan(sessionId, nextToken))
+                    }
+                    val progress = when (hydratedResult) {
+                        is StationScanResult.Accepted -> hydratedResult.progress
+                        is StationScanResult.AlreadyVisited -> hydratedResult.progress
+                        else -> return@launch
+                    }
+                    mutableState.value = mutableState.value.copy(sessionProgress = progress, stationScanResult = hydratedResult)
+                }
+            } catch (_: Exception) { mutableState.value = mutableState.value.copy(error = UserMessageKey.SESSION_START_FAILED) }
+        }
+    }
+
+    fun restartTestGame() {
+        val gameId = mutableState.value.sessionProgress?.session?.takeIf { it.isTest }?.gameId ?: return
+        startTestGame(gameId)
+    }
+
+    fun printGameQrCodes(gameId: Long) {
+        viewModelScope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) {
+                    val game = repository.getGame(gameId) ?: throw UserMessageException(UserMessageKey.GAME_UNAVAILABLE)
+                    stationQrPdfService.create(game)
+                }
+                val uri = FileProvider.getUriForFile(getApplication(), "${getApplication<Application>().packageName}.fileprovider", file)
+                mutableState.value = mutableState.value.copy(printablePdfUri = uri)
+            } catch (exception: Exception) {
+                mutableState.value = mutableState.value.copy(error = exception.messageKeyOr(UserMessageKey.GENERIC_ERROR))
+            }
+        }
+    }
+
+    fun clearPrintablePdfUri() { mutableState.value = mutableState.value.copy(printablePdfUri = null) }
+
     fun openCompletedSession(sessionId: Long) {
         if (mutableState.value.isLoadingSession) return
         viewModelScope.launch {
@@ -847,7 +919,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 route = GameScreenRoute.HOME
             )
             GameScreenRoute.PLAY_SESSION -> mutableState.value.copy(
-                route = GameScreenRoute.PLAY_LIST,
+                route = if (mutableState.value.sessionProgress?.session?.isTest == true) mutableState.value.testReturnRoute else GameScreenRoute.PLAY_LIST,
                 stationScanResult = null
             )
             GameScreenRoute.SCANNER -> mutableState.value.copy(

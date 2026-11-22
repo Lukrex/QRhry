@@ -158,3 +158,13 @@ and v6→v7 adds scoring policies and explicit task finalization.
 - **v9→v10** adds optional bounded task time limits, a default-false timeout
   marker to attempts, and active `task_timers`. Existing tasks remain untimed
   and existing attempts remain ordinary attempts.
+
+### Test sessions (schema v12)
+
+Schema v12 adds `game_sessions.is_test` with a default of `0`. The active-session
+unique index now applies only to normal (`is_test = 0`) sessions, so a test run
+can coexist with a real active run of the same game. Normal active-session
+lookups, completed-game history, and statistics exclude test sessions. Test
+sessions retain their own attempts and visits and are never used to remove or
+rewrite normal sessions. The v11→v12 migration adds this flag without changing
+existing session rows, which remain normal sessions.
