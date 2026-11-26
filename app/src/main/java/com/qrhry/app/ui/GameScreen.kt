@@ -74,6 +74,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -1638,11 +1639,7 @@ private fun SavedGame(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(game.title, style = MaterialTheme.typography.titleMedium)
-            GameScoringModeSelector(
-                scoringMode = game.scoringMode,
-                onScoringModeChange = { onScoringModeChange(game.id, it) }
-            )
+            Text(game.title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             OutlinedButton(onClick = { onTestGame(game) }, modifier = Modifier.fillMaxWidth()) {
                 IconLabel(QRhryIconKind.PLAY, stringResource(R.string.test_game))
             }
@@ -1657,16 +1654,20 @@ private fun SavedGame(
                 enabled = !isExporting,
                 modifier = Modifier.fillMaxWidth()
             ) { IconLabel(QRhryIconKind.EXPORT, stringResource(R.string.export_game_archive)) }
+            GameScoringModeSelector(
+                scoringMode = game.scoringMode,
+                onScoringModeChange = { onScoringModeChange(game.id, it) }
+            )
             game.stations.forEachIndexed { index, station ->
-                Text(stringResource(R.string.station_index_title, index + 1, station.title), style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.station_index_title, index + 1, station.title), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 if (station.bodyText.isNotBlank()) {
-                    Text(station.bodyText, style = MaterialTheme.typography.bodySmall)
+                    Text(station.bodyText, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 }
                 StationQrImage(
                     station = station,
-                    modifier = Modifier.size(144.dp)
+                    modifier = Modifier.size(144.dp).align(Alignment.CenterHorizontally)
                 )
-                OutlinedButton(onClick = { onEditStation(station) }) {
+                OutlinedButton(onClick = { onEditStation(station) }, modifier = Modifier.align(Alignment.CenterHorizontally),) {
                     IconLabel(QRhryIconKind.EDIT, stringResource(R.string.edit_station_content))
                 }
             }
