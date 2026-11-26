@@ -11,4 +11,5 @@ functions/lib/
 .firebase/
 .firebaserc
 firebase-debug.log
+firestore-debug.log
 .kotlin/

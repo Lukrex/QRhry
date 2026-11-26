@@ -143,7 +143,7 @@ hours, avoiding races with active imports. SQLite and the filesystem do not
 share an atomic commit; cleanup reconciles a process death between directory
 promotion and database commit.
 
-Version 4 exports are not readable by older app versions. The current app continues to import v1–v3. SQLite route and timer data is stored with schema v10; schema v11 adds local catalogue-origin metadata without changing the archive format.
+Version 4 exports are not readable by older app versions. The current app continues to import v1–v3. SQLite route and timer data is stored with schema v10; schema v11 adds local catalogue-origin metadata, and schema v12 adds test-session isolation. These local session changes do not affect the archive format.
 
 ## SOČ Demonstration
 

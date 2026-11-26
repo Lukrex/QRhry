@@ -1,7 +1,7 @@
 # Database
 
 The app uses raw SQLite through `SQLiteOpenHelper`; database operations are
-isolated in the data layer. The current schema version is 11.
+isolated in the data layer. The current schema version is 12.
 
 ## Core tables
 
@@ -13,8 +13,9 @@ isolated in the data layer. The current schema version is 11.
 Schema v11 also adds nullable `source_catalog_publication_id` and
 `source_catalog_revision_id`. A partial unique index on the publication ID
 prevents duplicate catalogue imports while leaving all locally created and
-file-imported games unaffected. The v10→v11 migration is additive; existing
-games and sessions retain their data.
+file-imported games unaffected. Schema v12 adds `game_sessions.is_test` with a
+default of false, so existing runs remain ordinary sessions. Test runs are
+excluded from the normal active-session and results queries.
 
 ### `stations`
 

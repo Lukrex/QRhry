@@ -9,7 +9,7 @@ flow is:
 
 - `domain` contains game, station, typed task, option, visit, attempt,
   drafts, and validation models without Android or database dependencies.
-- `data.local.GameDatabaseHelper` owns schema version 11, foreign keys, indexes,
+- `data.local.GameDatabaseHelper` owns schema version 12, foreign keys, indexes,
   and sequential, non-destructive migrations.
 - `data.GameRepository` owns parameterized reads and transactional writes for
   game/station/task/route content, session progression, and scoring. It validates
@@ -102,7 +102,7 @@ verified before a repository transaction inserts the game. The archive format,
 limits, and failure compensation are specified in `game-archive-format.md`;
 startup recovery removes staging/orphan directories older than 24 hours, so a
 recent in-progress import is not mistaken for abandoned work. SQLite is at
-schema v11. The current app imports v1–v3 archives; v1/v2 are linear.
+schema v12. The current app imports v1–v3 archives; v1/v2 are linear.
 
 ## Test runs and printable QR sheets
 
@@ -111,7 +111,8 @@ play, including evaluation, scoring, timers, and configured branching. A
 session-level test flag isolates these runs from normal active-session lookup,
 completed history, and statistics; regular sessions remain untouched. In test
 mode the UI advances directly to the repository's configured next station,
-without scanning.
+without scanning. Test runs start separately from regular sessions and can be
+restarted without changing game content.
 
 Printable station QR sheets are generated locally in the data layer with
 Android `PdfDocument` and the existing ZXing QR generator/payload. PDFs are A4
