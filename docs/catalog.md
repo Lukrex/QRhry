@@ -98,5 +98,4 @@ App Check, security rules or billing configuration.
 
 The initial release has no online gameplay, cross-device progress, comments,
 ratings or moderation portal. Firebase Blaze is billing-enabled and charges
-depend on region and usage; review current provider pricing and actual usage in
-the Firebase/Google Cloud consoles before public deployment.
+depend on region and usage.

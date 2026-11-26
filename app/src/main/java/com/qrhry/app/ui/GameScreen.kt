@@ -584,9 +584,6 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
             )
         }
 
-        OutlinedButton(onClick = onDiscover, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-            IconLabel(QRhryIconKind.LOCATION, stringResource(R.string.catalog_discover))
-        }
         AnimatedVisibility(
             visible = hasEntered,
             enter = fadeIn(tween(240, delayMillis = 140)) +
@@ -598,6 +595,23 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
                 icon = QRhryIconKind.CREATE,
                 primary = false,
                 onClick = onCreate
+            )
+        }
+
+        // OutlinedButton(onClick = onDiscover, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+        //     IconLabel(QRhryIconKind.LOCATION, stringResource(R.string.catalog_discover))
+        // }
+        AnimatedVisibility(
+            visible = hasEntered,
+            enter = fadeIn(tween(240, delayMillis = 140)) +
+                slideInVertically(tween(240, delayMillis = 140)) { it / 16 }
+        ) {
+            HomeActionCard(
+                title = stringResource(R.string.catalog_discover),
+                description = stringResource(R.string.home_catalog_description),
+                icon = QRhryIconKind.LOCATION,
+                primary = false,
+                onClick = onDiscover
             )
         }
 

@@ -8,6 +8,7 @@
     <string name="home_create_title">Create games</string>
     <string name="home_create_description">Build games with stations, questions, and media.</string>
     <string name="catalog_discover">Discover games</string>
+    <string name="home_catalog_description">Find already created games online.</string>
     <string name="catalog_title">Discover games</string>
     <string name="catalog_not_configured">The online catalogue is not configured yet. Local games still work as usual.</string>
     <string name="catalog_search">Search games</string>

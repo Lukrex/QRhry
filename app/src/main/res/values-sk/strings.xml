@@ -8,6 +8,7 @@
     <string name="home_create_title">Tvorba hier</string>
     <string name="home_create_description">Vytváraj hry so stanovišťami, otázkami a médiami.</string>
     <string name="catalog_discover">Objavovať hry</string>
+    <string name="home_catalog_description">Nájdi už vytvorené hry online.</string>
     <string name="catalog_title">Objavovať hry</string>
     <string name="catalog_not_configured">Online katalóg ešte nie je nastavený. Miestne hry fungujú ako doteraz.</string>
     <string name="catalog_search">Hľadať hry</string>
