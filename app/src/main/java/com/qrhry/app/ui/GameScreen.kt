@@ -1698,7 +1698,7 @@ private fun SavedGame(
                     onClick = { gameCollapsed.value=true },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    IconLabel(QRhryIconKind.UP, stringResource(R.string.uncollapse))
+                    IconLabel(QRhryIconKind.UP, stringResource(R.string.collapse))
                 }
             } else { //gameCollapsed
                 OutlinedButton(

@@ -307,4 +307,5 @@
     <string name="start_test">Start test</string>
     <string name="share_qr_pdf">Share station QR codes PDF</string>
     <string name="uncollapse">Show game</string>
+    <string name="collapse">Hide</string>
 </resources>
