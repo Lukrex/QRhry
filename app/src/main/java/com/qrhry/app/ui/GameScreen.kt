@@ -1634,75 +1634,91 @@ private fun SavedGame(
     onTestGame: (Game) -> Unit,
     isExporting: Boolean
 ) {
-    val gameCollapsed = rememberSaveable(game.id) { mutableStateOf(true) }
+    var gameCollapsed by rememberSaveable(game.id) {
+        mutableStateOf(true)
+    }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(game.title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-            if (!gameCollapsed.value) {
-                OutlinedButton(onClick = { onTestGame(game) }, modifier = Modifier.fillMaxWidth()) {
-                    IconLabel(QRhryIconKind.PLAY, stringResource(R.string.test_game))
-                }
-                OutlinedButton(
-                    onClick = { onPrintQr(game) },
-                    enabled = !isExporting,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    IconLabel(QRhryIconKind.EXPORT, stringResource(R.string.print_qr_codes))
-                }
-                OutlinedButton(
-                    onClick = { onEditRoute(game) },
-                    enabled = !isExporting,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    IconLabel(QRhryIconKind.EDIT, stringResource(R.string.edit_game_route))
-                }
-                OutlinedButton(
-                    onClick = { onExport(game) },
-                    enabled = !isExporting,
-                    modifier = Modifier.fillMaxWidth()
-                ) { IconLabel(QRhryIconKind.EXPORT, stringResource(R.string.export_game_archive)) }
-                GameScoringModeSelector(
-                    scoringMode = game.scoringMode,
-                    onScoringModeChange = { onScoringModeChange(game.id, it) }
-                )
-                game.stations.forEachIndexed { index, station ->
-                    Text(
-                        stringResource(R.string.station_index_title, index + 1, station.title),
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center,
+            AnimatedVisibility(!gameCollapsed) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { onTestGame(game) },
                         modifier = Modifier.fillMaxWidth()
+                    ) {
+                        IconLabel(QRhryIconKind.PLAY, stringResource(R.string.test_game))
+                    }
+                    OutlinedButton(
+                        onClick = { onPrintQr(game) },
+                        enabled = !isExporting,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        IconLabel(QRhryIconKind.EXPORT, stringResource(R.string.print_qr_codes))
+                    }
+                    OutlinedButton(
+                        onClick = { onEditRoute(game) },
+                        enabled = !isExporting,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        IconLabel(QRhryIconKind.EDIT, stringResource(R.string.edit_game_route))
+                    }
+                    OutlinedButton(
+                        onClick = { onExport(game) },
+                        enabled = !isExporting,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        IconLabel(
+                            QRhryIconKind.EXPORT,
+                            stringResource(R.string.export_game_archive)
+                        )
+                    }
+                    GameScoringModeSelector(
+                        scoringMode = game.scoringMode,
+                        onScoringModeChange = { onScoringModeChange(game.id, it) }
                     )
-                    if (station.bodyText.isNotBlank()) {
+                    game.stations.forEachIndexed { index, station ->
                         Text(
-                            station.bodyText,
-                            style = MaterialTheme.typography.bodySmall,
+                            stringResource(R.string.station_index_title, index + 1, station.title),
+                            style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth()
                         )
+                        if (station.bodyText.isNotBlank()) {
+                            Text(
+                                station.bodyText,
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        StationQrImage(
+                            station = station,
+                            modifier = Modifier.size(144.dp).align(Alignment.CenterHorizontally)
+                        )
+                        OutlinedButton(
+                            onClick = { onEditStation(station) },
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        ) {
+                            IconLabel(
+                                QRhryIconKind.EDIT,
+                                stringResource(R.string.edit_station_content)
+                            )
+                        }
                     }
-                    StationQrImage(
-                        station = station,
-                        modifier = Modifier.size(144.dp).align(Alignment.CenterHorizontally)
-                    )
                     OutlinedButton(
-                        onClick = { onEditStation(station) },
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        onClick = { gameCollapsed = true },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        IconLabel(QRhryIconKind.EDIT, stringResource(R.string.edit_station_content))
+                        IconLabel(QRhryIconKind.UP, stringResource(R.string.collapse))
                     }
                 }
+            }
+            if (gameCollapsed) {
                 OutlinedButton(
-                    onClick = { gameCollapsed.value=true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    IconLabel(QRhryIconKind.UP, stringResource(R.string.collapse))
-                }
-            } else { //gameCollapsed
-                OutlinedButton(
-                    onClick = { gameCollapsed.value=false },
+                    onClick = { gameCollapsed=false },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     IconLabel(QRhryIconKind.DOWN, stringResource(R.string.uncollapse))
