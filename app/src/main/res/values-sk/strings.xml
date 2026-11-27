@@ -310,4 +310,5 @@
     <string name="restart_test">Spustiť test znova</string>
     <string name="start_test">Začať test</string>
     <string name="share_qr_pdf">Zdieľať PDF s QR kódmi stanovíšť</string>
+    <string name="uncollapse">Zobraziť hru</string>
 </resources>

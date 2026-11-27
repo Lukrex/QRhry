@@ -306,4 +306,5 @@
     <string name="restart_test">Restart test</string>
     <string name="start_test">Start test</string>
     <string name="share_qr_pdf">Share station QR codes PDF</string>
+    <string name="uncollapse">Show game</string>
 </resources>
