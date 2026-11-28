@@ -36,6 +36,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import com.qrhry.app.R
 import com.qrhry.app.data.online.CatalogGame
@@ -69,17 +70,25 @@ fun CatalogScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = if (page == "catalog") onBack else { { page = "catalog"; viewModel.clearMessage() } }) {
-                Text(stringResource(if (page == "catalog") R.string.back else R.string.catalog_back))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                QRhryIcon(QRhryIconKind.LOCATION, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.catalog_title), style = MaterialTheme.typography.headlineSmall)
             }
-            Text(stringResource(R.string.catalog_title), style = MaterialTheme.typography.headlineSmall)
+            OutlinedButton(onClick = if (page == "catalog") onBack else { { page = "catalog"; viewModel.clearMessage() } }) {
+                IconLabel(QRhryIconKind.BACK, stringResource(if (page == "catalog") R.string.back else R.string.catalog_back))
+            }
         }
         if (!state.isConfigured) {
             Text(stringResource(R.string.catalog_not_configured), color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else when (page) {
             "catalog" -> {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = state.query, onValueChange = viewModel::setQuery,
                         label = { Text(stringResource(R.string.catalog_search)) }, modifier = Modifier.weight(1f), singleLine = true

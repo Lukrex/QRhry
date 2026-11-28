@@ -599,9 +599,6 @@ private fun HomeScreen(onCreate: () -> Unit, onPlay: () -> Unit, onSettings: () 
             )
         }
 
-        // OutlinedButton(onClick = onDiscover, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-        //     IconLabel(QRhryIconKind.LOCATION, stringResource(R.string.catalog_discover))
-        // }
         AnimatedVisibility(
             visible = hasEntered,
             enter = fadeIn(tween(240, delayMillis = 140)) +
@@ -736,7 +733,8 @@ private fun SettingsScreen(
         val darkModeLabel = stringResource(R.string.dark_mode)
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 QRhryIcon(QRhryIconKind.SETTINGS, tint = MaterialTheme.colorScheme.primary)
@@ -937,10 +935,10 @@ private fun GameLibraryScreen(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
                     modifier = Modifier.weight(1f),
